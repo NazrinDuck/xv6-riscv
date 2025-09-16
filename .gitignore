@@ -17,3 +17,5 @@ user/usys.S
 .gdbinit
 TAGS
 doc/
+.bash_history
+.gdb_history

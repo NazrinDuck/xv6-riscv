@@ -1,3 +1,8 @@
+#ifndef __DEFS_H
+#define __DEFS_H
+
+#include "./riscv.h"
+
 struct buf;
 struct context;
 struct file;
@@ -8,6 +13,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct pqueue;
 
 // bio.c
 void binit(void);
@@ -76,6 +82,12 @@ int pipewrite(struct pipe *, uint64, int);
 int printf(char *, ...) __attribute__((format(printf, 1, 2)));
 void panic(char *) __attribute__((noreturn));
 void printfinit(void);
+
+// pqueue.c
+int push_queue(struct pqueue *, struct proc *);
+struct proc *pop_queue(struct pqueue *);
+void show_queue(struct pqueue *);
+int is_empty(struct pqueue *);
 
 // proc.c
 int cpuid(void);
@@ -184,3 +196,12 @@ void virtio_disk_intr(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
+
+// for debug print
+#define DBG(msg, ...)                                                          \
+  printf("\x1b[01;31m"                                                         \
+         "[DEBUG]"                                                             \
+         "\x1b[01;34m " msg "\x1b[0m",                                         \
+         ##__VA_ARGS__)
+
+#endif // !__DEFS_H

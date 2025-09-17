@@ -13,6 +13,11 @@
 
 #define MAXARGS 10
 
+#define PROMPT                                                                 \
+  "\x1b[01;32m"                                                                \
+  "$ "                                                                         \
+  "\x1b[0m"
+
 struct cmd {
   int type;
 };
@@ -130,7 +135,7 @@ void runcmd(struct cmd *cmd) {
 }
 
 int getcmd(char *buf, int nbuf) {
-  write(2, "$ ", 2);
+  write(2, PROMPT, sizeof(PROMPT));
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
   if (buf[0] == 0) // EOF

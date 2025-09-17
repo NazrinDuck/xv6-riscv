@@ -139,8 +139,17 @@ int printf(char *fmt, ...) {
 
 void panic(char *s) {
   panicking = 1;
-  printf("panic: ");
+
+  printf("\x1b[01;31m");
+
+  printf("[Kernel Panic] ");
   printf("%s\n", s);
+  printf("--------------------------------------\n");
+  printf("CPU %d\n", cpuid());
+  // printf("in Process [%d]", curr->pid);
+
+  printf("\x1b[0m");
+
   panicked = 1; // freeze uart output from other CPUs
   for (;;)
     ;

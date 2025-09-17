@@ -11,7 +11,6 @@
 #include "defs.h"
 
 #include "param.h"
-#include "spinlock.h"
 #include "stat.h"
 
 #include "fs.h"

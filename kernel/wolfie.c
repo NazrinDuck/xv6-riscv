@@ -1,7 +1,6 @@
 #define LF "\n"
 #define ESC "\033"
 
-
 #include "./wolfie.h"
 
 #define WOLFIE_MIN (WOLFIE_SZ / 10)

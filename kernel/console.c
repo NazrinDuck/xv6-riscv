@@ -27,6 +27,7 @@
 #include "proc.h"
 
 #define BACKSPACE 0x100
+#define CLEAR 0x101
 #define C(x) ((x) - '@') // Control-x
 
 //
@@ -40,6 +41,12 @@ void consputc(int c) {
     uartputc_sync('\b');
     uartputc_sync(' ');
     uartputc_sync('\b');
+  } else if (c == CLEAR) {
+    uartputc_sync('\x1b');
+    uartputc_sync('[');
+    uartputc_sync('2');
+    uartputc_sync('J');
+
   } else {
     uartputc_sync(c);
   }
@@ -157,6 +164,14 @@ void consoleintr(int c) {
       consputc(BACKSPACE);
     }
     break;
+  /*
+  case C('L'): // Clear
+    if (cons.e != cons.w) {
+      cons.e--;
+      consputc(CLEAR);
+    }
+    break;
+  */
   default:
     if (c != 0 && cons.e - cons.r < INPUT_BUF_SIZE) {
       c = (c == '\r') ? '\n' : c;

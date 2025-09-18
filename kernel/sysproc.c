@@ -7,6 +7,8 @@
 #include "proc.h"
 #include "vm.h"
 
+extern struct proc proc[];
+
 uint64 sys_exit(void) {
   int n;
   argint(0, &n);
@@ -84,4 +86,53 @@ uint64 sys_uptime(void) {
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// uint8 sys_getpriority(int)
+//
+// required arg `pid`
+//
+// return the priority of given pid's process
+//
+// return -1 if process not found
+uint64 sys_getpriority(void) {
+  struct proc *p;
+  int pid;
+
+  argint(0, &pid);
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->pid == pid) {
+      return p->prio;
+    }
+  }
+
+  return -1;
+}
+
+// int sys_setpriority(int, int8)
+//
+// required arg `pid` and `value`
+//
+// set the priority of given pid's process to `value`
+//
+// return 0 if success
+//
+// return -1 if process not found
+uint64 sys_setpriority(void) {
+  struct proc *p;
+  int pid;
+  uint8 value;
+
+  argint(0, &pid);
+  arguint8(1, &value);
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->pid == pid) {
+      p->prio = value;
+      return 0;
+    }
+  }
+
+  return -1;
 }

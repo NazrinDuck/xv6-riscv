@@ -86,7 +86,6 @@ void printfinit(void);
 // pqueue.c
 int push_queue(struct pqueue *, struct proc *);
 struct proc *pop_queue(struct pqueue *);
-void show_queue(struct pqueue *);
 int is_empty(struct pqueue *);
 
 // proc.c
@@ -141,6 +140,8 @@ int strncmp(const char *, const char *, uint);
 char *strncpy(char *, const char *, int);
 
 // syscall.c
+void arguint8(int, uint8 *);
+void argint8(int, int8 *);
 void argint(int, int *);
 void arguint(int, uint *);
 int argstr(int, char *, int);

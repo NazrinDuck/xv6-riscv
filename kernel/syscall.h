@@ -26,4 +26,12 @@
 
 #define SYS_wolfie 22
 
+// get/set process's priority
+#define SYS_getpriority 23
+#define SYS_setpriority 24
+
+// get/set CPU core where the process runs
+#define SYS_sched_getaffinity 25
+#define SYS_sched_setaffinity 26
+
 #endif // !__SYSCALL_H

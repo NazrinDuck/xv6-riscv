@@ -97,15 +97,18 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, READY, RUNNABLE, RUNNING, ZOMBIE };
 
+#define DEFAULT_PRIO 128
+
 // Per-process state
 struct proc {
   struct spinlock lock;
 
   // p->lock must be held when using these:
   enum procstate state; // Process state
-  int8 prio;            // Process Priority -32~31
-                        // A **higher value** stands for a higher priority
-                        // Default 0
+
+  uint8 prio; // Process Priority 0~255
+              // A **higher value** stands for a higher priority
+              // Default 128
 
   void *chan; // If non-zero, sleeping on chan
   int killed; // If non-zero, have been killed

@@ -4,11 +4,7 @@
 #include "param.h"
 #include "types.h"
 
-#include "riscv.h"
-
 #include "defs.h"
-
-#include "spinlock.h"
 
 #include "proc.h"
 
@@ -51,6 +47,12 @@ static uint64 argraw(int n) {
   panic("argraw");
   return -1;
 }
+
+// Fetch the nth unsigned 8-bit system call argument.
+void arguint8(int n, uint8 *ip) { *ip = argraw(n); }
+
+// Fetch the nth 8-bit system call argument.
+void argint8(int n, int8 *ip) { *ip = argraw(n); }
 
 // Fetch the nth 32-bit system call argument.
 void argint(int n, int *ip) { *ip = argraw(n); }
@@ -97,20 +99,36 @@ extern uint64 sys_close(void);
 
 extern uint64 sys_wolfie(void);
 
+extern uint64 sys_setpriority(void);
+extern uint64 sys_getpriority(void);
+
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
 static uint64 (*syscalls[])(void) = {
-    [SYS_fork] = sys_fork,     [SYS_exit] = sys_exit,
-    [SYS_wait] = sys_wait,     [SYS_pipe] = sys_pipe,
-    [SYS_read] = sys_read,     [SYS_kill] = sys_kill,
-    [SYS_exec] = sys_exec,     [SYS_fstat] = sys_fstat,
-    [SYS_chdir] = sys_chdir,   [SYS_dup] = sys_dup,
-    [SYS_getpid] = sys_getpid, [SYS_sbrk] = sys_sbrk,
-    [SYS_pause] = sys_pause,   [SYS_uptime] = sys_uptime,
-    [SYS_open] = sys_open,     [SYS_write] = sys_write,
-    [SYS_mknod] = sys_mknod,   [SYS_unlink] = sys_unlink,
-    [SYS_link] = sys_link,     [SYS_mkdir] = sys_mkdir,
-    [SYS_close] = sys_close,   [SYS_wolfie] = sys_wolfie,
+    [SYS_fork] = sys_fork,
+    [SYS_exit] = sys_exit,
+    [SYS_wait] = sys_wait,
+    [SYS_pipe] = sys_pipe,
+    [SYS_read] = sys_read,
+    [SYS_kill] = sys_kill,
+    [SYS_exec] = sys_exec,
+    [SYS_fstat] = sys_fstat,
+    [SYS_chdir] = sys_chdir,
+    [SYS_dup] = sys_dup,
+    [SYS_getpid] = sys_getpid,
+    [SYS_sbrk] = sys_sbrk,
+    [SYS_pause] = sys_pause,
+    [SYS_uptime] = sys_uptime,
+    [SYS_open] = sys_open,
+    [SYS_write] = sys_write,
+    [SYS_mknod] = sys_mknod,
+    [SYS_unlink] = sys_unlink,
+    [SYS_link] = sys_link,
+    [SYS_mkdir] = sys_mkdir,
+    [SYS_close] = sys_close,
+    [SYS_wolfie] = sys_wolfie,
+    [SYS_getpriority] = sys_getpriority,
+    [SYS_setpriority] = sys_setpriority,
 };
 
 void syscall(void) {

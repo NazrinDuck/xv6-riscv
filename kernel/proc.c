@@ -51,6 +51,7 @@ void procinit(void) {
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
+    p->prio = DEFAULT_PRIO;
     p->kstack = KSTACK((int)(p - proc));
   }
 }
@@ -419,6 +420,10 @@ void scheduler(void) {
 
     // int found = 0;
     for (p = proc; p < &proc[NPROC]; p++) {
+      if (p->lock.locked) {
+        continue;
+      }
+
       acquire(&p->lock);
       if (p->state == RUNNABLE) {
         // DBG("[cpu %d] push %d\n", cpuid(), p->pid);
@@ -437,18 +442,21 @@ void scheduler(void) {
     } else {
       while (!!(p = pop_queue(pq))) {
         acquire(&p->lock);
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
+        if (p->state == READY) {
 
-        // DBG("[cpu %d] swtch to %d\n", cpuid(), p->pid);
-        swtch(&c->context, &p->context);
+          // Switch to chosen process.  It is the process's job
+          // to release its lock and then reacquire it
+          // before jumping back to us.
+          p->state = RUNNING;
+          c->proc = p;
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
+          // DBG("[cpu %d] swtch to %d\n", cpuid(), p->pid);
+          swtch(&c->context, &p->context);
+
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+        }
         release(&p->lock);
       }
     }
@@ -637,12 +645,14 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len) {
 // No lock to avoid wedging a stuck machine further.
 void procdump(void) {
   static char *states[] = {
-      [UNUSED] = "unused",    [USED] = "used",   [SLEEPING] = "sleep ",
-      [RUNNABLE] = "runable", [RUNNING] = "run", [ZOMBIE] = "zombie"};
+      [UNUSED] = "unused", [USED] = "used",        [SLEEPING] = "sleep",
+      [READY] = "ready",   [RUNNABLE] = "runable", [RUNNING] = "run",
+      [ZOMBIE] = "zombie"};
   struct proc *p;
   char *state;
 
   printf("\n");
+  printf("PID\tSTATE\tNAME\tPRIO\n");
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p->state == UNUSED)
       continue;
@@ -650,7 +660,26 @@ void procdump(void) {
       state = states[p->state];
     else
       state = "???";
-    printf("%d %s %s", p->pid, state, p->name);
+    printf("%d\t%s\t%s\t%d", p->pid, state, p->name, (int)p->prio);
     printf("\n");
   }
+
+  /*
+  push_off();
+  struct cpu *c;
+  struct pqueue *pq;
+  printf("CPUINFO\n");
+  for (c = cpus; c < &cpus[NCPU]; ++c) {
+    pq = c->pq;
+    printf("CPUID: %d\n", (int)(c - cpus));
+    printf("PQUEUE:\n");
+    printf("NO\tPID\tPRIO\n");
+    for (int i = pq->head; i != pq->tail; i = (i + 1) % NPROC) {
+      printf("%d\t%d\t%d\n", i, pq->queue[i]->pid, pq->queue[i]->prio);
+    }
+    printf("\n");
+  }
+  printf("\n");
+  pop_off();
+  */
 }

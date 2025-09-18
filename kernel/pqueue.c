@@ -18,7 +18,7 @@ int push_queue(struct pqueue *pq, struct proc *proc) {
       struct proc *pprev = pcurr;
       // Move them back
       for (j = i; j != pq->tail; j = (j + 1) % NPROC) {
-        pcurr = pq->queue[j];
+        pcurr = pq->queue[(j + 1) % NPROC];
 
         pq->queue[(j + 1) % NPROC] = pprev;
 
@@ -27,10 +27,12 @@ int push_queue(struct pqueue *pq, struct proc *proc) {
 
       goto END;
     }
+    /*
+     */
   }
 
 END:
-  // Insert chosen process
+  //  Insert chosen process
   pq->queue[i] = proc;
 
   // Grow the queue
@@ -54,21 +56,11 @@ struct proc *pop_queue(struct pqueue *pq) {
 
   ret = pq->queue[pq->head];
 
+  pq->queue[pq->head] = 0;
+
   pq->head = (pq->head + 1) % NPROC;
 
   return ret;
-}
-
-void show_queue(struct pqueue *pq) {
-  int i;
-  printf("[head]: %lu\n", pq->head);
-  printf("[tail]: %lu\n", pq->tail);
-
-  for (i = pq->head; i != pq->tail; i = (i + 1) % NPROC) {
-    printf("[%d]: %p\n", i, pq->queue[i]);
-  }
-
-  return;
 }
 
 int is_empty(struct pqueue *pq) { return pq->head == pq->tail; }

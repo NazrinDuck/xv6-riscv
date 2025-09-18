@@ -11,10 +11,10 @@ int test_ok() {
   int ret = wolfie(buffer, WOLFIE_SZ);
   switch (ret) {
   case -1:
-    fprintf(2, "wolfie: fail to copy\n");
+    fprintf(stderr, "wolfie: fail to copy\n");
     return -1;
   case -2:
-    fprintf(2, "wolfie: size too small\n");
+    fprintf(stderr, "wolfie: size too small\n");
     return -1;
   default:
     printf("wolfie return %d\n", ret);
@@ -34,10 +34,10 @@ int test_small() {
   int ret = wolfie(buffer, 0x100);
   switch (ret) {
   case -1:
-    fprintf(2, "wolfie: fail to copy\n");
+    fprintf(stderr, "wolfie: fail to copy\n");
     break;
   case -2:
-    fprintf(2, "wolfie: size too small\n");
+    fprintf(stderr, "wolfie: size too small\n");
     break;
   default:
     printf("wolfie return %d\n", ret);
@@ -52,10 +52,10 @@ int test_part() {
   int ret = wolfie(buffer, size);
   switch (ret) {
   case -1:
-    fprintf(2, "wolfie: fail to copy\n");
+    fprintf(stderr, "wolfie: fail to copy\n");
     return -1;
   case -2:
-    fprintf(2, "wolfie: size too small\n");
+    fprintf(stderr, "wolfie: size too small\n");
     return -1;
   default:
     printf("wolfie return %d\n", ret);

@@ -2,6 +2,8 @@
 
 #include "../kernel/fcntl.h"
 #include "../kernel/types.h"
+#include "../kernel/wolfie.h"
+
 #include "../user/user.h"
 
 // Parsed command representation
@@ -80,14 +82,14 @@ void runcmd(struct cmd *cmd) {
     if (ecmd->argv[0] == 0)
       exit(1);
     exec(ecmd->argv[0], ecmd->argv);
-    fprintf(2, "exec %s failed\n", ecmd->argv[0]);
+    fprintf(stderr, "exec %s failed\n", ecmd->argv[0]);
     break;
 
   case REDIR:
     rcmd = (struct redircmd *)cmd;
     close(rcmd->fd);
     if (open(rcmd->file, rcmd->mode) < 0) {
-      fprintf(2, "open %s failed\n", rcmd->file);
+      fprintf(stderr, "open %s failed\n", rcmd->file);
       exit(1);
     }
     runcmd(rcmd->cmd);
@@ -166,7 +168,7 @@ int main(void) {
       // Chdir must be called by the parent, not the child.
       cmd[strlen(cmd) - 1] = 0; // chop \n
       if (chdir(cmd + 3) < 0)
-        fprintf(2, "cannot cd %s\n", cmd + 3);
+        fprintf(stderr, "cannot cd %s\n", cmd + 3);
     } else {
       if (fork1() == 0)
         runcmd(parsecmd(cmd));
@@ -177,7 +179,7 @@ int main(void) {
 }
 
 void panic(char *s) {
-  fprintf(2, "%s\n", s);
+  fprintf(stderr, "%s\n", s);
   exit(1);
 }
 
@@ -320,7 +322,7 @@ struct cmd *parsecmd(char *s) {
   cmd = parseline(&s, es);
   peek(&s, es, "");
   if (s != es) {
-    fprintf(2, "leftovers: %s\n", s);
+    fprintf(stderr, "leftovers: %s\n", s);
     panic("syntax");
   }
   nulterminate(cmd);

@@ -1,6 +1,15 @@
+#ifndef __USER_H
+#define __USER_H
+
 #define SBRK_ERROR ((char *)-1)
+#include "../kernel/types.h"
 
 struct stat;
+struct file_ptr;
+
+extern struct file_ptr *stdin;
+extern struct file_ptr *stdout;
+extern struct file_ptr *stderr;
 
 // system calls
 int fork(void);
@@ -25,6 +34,8 @@ char *sys_sbrk(int, int);
 int pause(int);
 int uptime(void);
 int wolfie(void *, int);
+uint8 getpriority(int);
+int setpriority(int, uint8);
 
 // ulib.c
 int stat(const char *, struct stat *);
@@ -42,9 +53,13 @@ char *sbrk(int);
 char *sbrklazy(int);
 
 // printf.c
-void fprintf(int, const char *, ...) __attribute__((format(printf, 2, 3)));
+int fflush(struct file_ptr *);
+void fprintf(struct file_ptr *, const char *, ...)
+    __attribute__((format(printf, 2, 3)));
 void printf(const char *, ...) __attribute__((format(printf, 1, 2)));
 
 // umalloc.c
 void *malloc(uint);
 void free(void *);
+
+#endif // !__USER_H

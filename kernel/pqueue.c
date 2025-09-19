@@ -7,7 +7,7 @@ int push_queue(struct pqueue *pq, struct proc *proc) {
 
   int8 prio = proc->prio;
 
-  for (i = pq->head; i != pq->tail; i = (i + 1) % NPROC) {
+  for (i = pq->head; i != pq->tail; i = (i + 1) % MAX_QUEUE) {
     pcurr = pq->queue[i];
 
     if (!pcurr) {
@@ -17,18 +17,16 @@ int push_queue(struct pqueue *pq, struct proc *proc) {
     if (prio > pcurr->prio) {
       struct proc *pprev = pcurr;
       // Move them back
-      for (j = i; j != pq->tail; j = (j + 1) % NPROC) {
-        pcurr = pq->queue[(j + 1) % NPROC];
+      for (j = i; j != pq->tail; j = (j + 1) % MAX_QUEUE) {
+        pcurr = pq->queue[(j + 1) % MAX_QUEUE];
 
-        pq->queue[(j + 1) % NPROC] = pprev;
+        pq->queue[(j + 1) % MAX_QUEUE] = pprev;
 
         pprev = pcurr;
       }
 
       goto END;
     }
-    /*
-     */
   }
 
 END:
@@ -36,8 +34,8 @@ END:
   pq->queue[i] = proc;
 
   // Grow the queue
-  if ((pq->tail + 1) % NPROC != pq->head) {
-    pq->tail = (pq->tail + 1) % NPROC;
+  if ((pq->tail + 1) % MAX_QUEUE != pq->head) {
+    pq->tail = (pq->tail + 1) % MAX_QUEUE;
   } else {
     // Queue is full, fail to push
     return -1;
@@ -58,7 +56,7 @@ struct proc *pop_queue(struct pqueue *pq) {
 
   pq->queue[pq->head] = 0;
 
-  pq->head = (pq->head + 1) % NPROC;
+  pq->head = (pq->head + 1) % MAX_QUEUE;
 
   return ret;
 }

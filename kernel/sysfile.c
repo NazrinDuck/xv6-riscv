@@ -478,13 +478,13 @@ uint64 sys_pipe(void) {
 #include "./wolfie.c"
 
 // int sys_wolfie(void *buf, uint size)
+//
 // which copies an ASCII art image to a user-supplied buffer, provided that the
 // buffer is large enough. You are welcome to use an ASCII art generator, or
 // draw your own by hand.
+//
 // If the buffer is too small, or not valid, return a negative value. If the
 // call succeeds, return the number of bytes copied.
-//
-//
 uint64 sys_wolfie(void) {
   uint64 addr;
   uint size;

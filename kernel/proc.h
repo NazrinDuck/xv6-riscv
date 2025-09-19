@@ -6,6 +6,15 @@
 #include "riscv.h"
 
 #include "spinlock.h"
+#include "types.h"
+
+#define MAX_PIDS (65536)
+
+#define MAX_QUEUE (NPROC)
+
+enum wait_mode { P_PID, P_ANY };
+
+enum wait_option { W_NORMAL, W_EXTRA };
 
 // Saved registers for kernel context switches.
 struct context {
@@ -28,16 +37,30 @@ struct context {
 };
 
 struct pqueue {
-  struct proc *queue[NPROC];
+  struct proc *queue[MAX_QUEUE];
   uint64 head;
   uint64 tail;
 };
+
+#define CPU_ANY (-100)
+
+#define CPU(x) ((cpuid_t)(x > (NCPU - 1) ? (NCPU - 1) : x))
+
+#define CPU0 ((cpuid_t)0)
+#define CPU1 ((cpuid_t)1)
+#define CPU2 ((cpuid_t)2)
+#define CPU3 ((cpuid_t)3)
+#define CPU4 ((cpuid_t)4)
+#define CPU5 ((cpuid_t)5)
+#define CPU6 ((cpuid_t)6)
+#define CPU7 ((cpuid_t)7)
 
 // Per-CPU state.
 struct cpu {
   struct proc *proc;      // The process running on this cpu, or null.
   struct pqueue *pq;      // The process queue that will be run.
   struct context context; // swtch() here to enter scheduler().
+  tick_t run_time;        // schedule count
   int noff;               // Depth of push_off() nesting.
   int intena;             // Were interrupts enabled before push_off()?
 };
@@ -97,6 +120,40 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, READY, RUNNABLE, RUNNING, ZOMBIE };
 
+struct pcpu_info {
+  // Process can run in which CPU?
+  //
+  // Default `CPU_ANY` (-100), means it can run in any CPU
+  //
+  // Currently only agree 1 CPU
+  cpuid_t affinity;
+  // Process is running in which CPU?
+  //
+  // Valid only when `proc->state` is `RUNNING`,
+  // other time is invalid
+  cpuid_t running;
+};
+
+struct time_info {
+  time_t mark_time;
+  // wait ticks
+  // aka WT
+  time_t wait_time;
+  // turn around ticks
+  // aka TAT
+  time_t ta_time;
+};
+
+// Used in user space
+struct pinfo_ex {
+  // Return state
+  int xstate;
+  // Wait time (us)
+  time_t wait_time;
+  // Turn-around time (us)
+  time_t ta_time;
+};
+
 #define DEFAULT_PRIO 128
 
 // Per-process state
@@ -113,7 +170,13 @@ struct proc {
   void *chan; // If non-zero, sleeping on chan
   int killed; // If non-zero, have been killed
   int xstate; // Exit status to be returned to parent's wait
-  int pid;    // Process ID
+  pid_t pid;  // Process ID
+
+  // Process's CPU information
+  struct pcpu_info pcpu_info;
+
+  // time information abult WT and TAT
+  struct time_info time_info;
 
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process

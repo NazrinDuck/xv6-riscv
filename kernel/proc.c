@@ -51,7 +51,6 @@ void procinit(void) {
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
-    p->prio = DEFAULT_PRIO;
     p->kstack = KSTACK((int)(p - proc));
   }
 }
@@ -120,6 +119,15 @@ found:
     return 0;
   }
 
+  // Set default priority
+  p->prio = DEFAULT_PRIO;
+
+  // Set CPU affinity
+  p->pcpu_info.affinity = CPU_ANY;
+
+  // Set to -1
+  p->pcpu_info.running = -1;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if (p->pagetable == 0) {
@@ -154,6 +162,9 @@ static void freeproc(struct proc *p) {
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->pcpu_info.affinity = CPU_ANY;
+  p->pcpu_info.running = -1;
+  memset(&p->time_info, 0, sizeof(struct time_info));
   p->state = UNUSED;
 }
 
@@ -258,6 +269,15 @@ int kfork(void) {
   // Inherite priority
   np->prio = p->prio;
 
+  // Set to default CPU strategy
+  np->pcpu_info.affinity = CPU_ANY;
+
+  np->pcpu_info.running = -1;
+
+  // Clear times
+  np->time_info.ta_time = 0;
+  np->time_info.wait_time = 0;
+
   // increment reference counts on open file descriptors.
   for (i = 0; i < NOFILE; i++)
     if (p->ofile[i])
@@ -327,6 +347,7 @@ void kexit(int status) {
 
   acquire(&p->lock);
 
+  p->time_info.ta_time += get_cycle() - p->time_info.mark_time;
   p->xstate = status;
   p->state = ZOMBIE;
 
@@ -338,11 +359,29 @@ void kexit(int status) {
 }
 
 // Wait for a child process to exit and return its pid.
+//
+// Required arg `addr`, `wpid`, `mode`, `option`
+//
+// If `mode` is set to P_ANY, `wpid` is ignored
+//
+// If `option` is set to W_EXTRA, You need to provide a
+// `struct pinfo_ex *` type pointer
+//
 // Return -1 if this process has no children.
-int kwait(uint64 addr) {
+pid_t kwait(uint64 addr, pid_t wpid, enum wait_mode mode,
+            enum wait_option option) {
   struct proc *pp;
+  char *src = 0;
+  uint64 size = 0;
+
+  if (mode != P_ANY && mode != P_PID) {
+    // Inproper mode
+    return -1;
+  }
+
   int havekids, pid;
   struct proc *p = myproc();
+  struct pinfo_ex pinfo_ex;
 
   acquire(&wait_lock);
 
@@ -354,21 +393,53 @@ int kwait(uint64 addr) {
         // make sure the child isn't still in exit() or swtch().
         acquire(&pp->lock);
 
+        if (mode == P_PID && pp->pid != wpid) {
+          release(&pp->lock);
+          continue;
+        }
+
         havekids = 1;
         if (pp->state == ZOMBIE) {
+
           // Found one.
           pid = pp->pid;
-          if (addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
-                                   sizeof(pp->xstate)) < 0) {
+
+          if (option == W_EXTRA) {
+            //  If `option` is set to W_EXTRA,
+            //  We'll transfers `struct pinfo_ex` to user space
+            pinfo_ex = (struct pinfo_ex){
+
+                // Extra information
+                .xstate = pp->xstate,
+                .wait_time = pp->time_info.wait_time,
+                .ta_time = pp->time_info.ta_time};
+
+            src = (char *)&pinfo_ex;
+            size = sizeof(struct pinfo_ex);
+
+          } else if (option == W_NORMAL) {
+            //  If `option` is set to W_NORMAL
+            //  We'll just transfers `xstate` to user space
+            src = (char *)&pp->xstate;
+            size = sizeof(pp->xstate);
+          } else {
+            // Inproper option
+            goto PROC_FAIL;
+          }
+
+          if (addr != 0 && copyout(p->pagetable, addr, src, size) < 0) {
+          PROC_FAIL:
             release(&pp->lock);
             release(&wait_lock);
             return -1;
           }
+
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
           return pid;
         }
+
         release(&pp->lock);
       }
     }
@@ -394,6 +465,14 @@ void initpq(struct cpu *c) {
   return;
 }
 
+uint64 atomic_inc_sched_cnt(uint64 *sched_cnt) {
+  return __sync_fetch_and_add(sched_cnt, 1);
+}
+
+uint64 atomic_fetch_sched_cnt(uint64 *sched_cnt) {
+  return __sync_fetch_and_add(sched_cnt, 0);
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -403,6 +482,8 @@ void initpq(struct cpu *c) {
 //    via swtch back to the scheduler.
 void scheduler(void) {
   struct proc *p;
+  cpuid_t affinity;
+  time_t timen;
   struct cpu *c = mycpu();
   initpq(c);
 
@@ -418,9 +499,17 @@ void scheduler(void) {
     intr_on();
     intr_off();
 
+    // atomic_inc_sched_cnt(&c->sched_cnt);
+
     // int found = 0;
     for (p = proc; p < &proc[NPROC]; p++) {
-      if (p->lock.locked) {
+      affinity = p->pcpu_info.affinity;
+
+      if (affinity != CPU_ANY) {
+        if (affinity != cpuid()) {
+          continue;
+        }
+      } else if (p->lock.locked) {
         continue;
       }
 
@@ -429,9 +518,15 @@ void scheduler(void) {
         // DBG("[cpu %d] push %d\n", cpuid(), p->pid);
 
         if (push_queue(pq, p) < 0) {
-          panic("scheduler: proc queue is full");
+          // panic("scheduler: proc queue is full");
+          // No need to panic, just give it to other CPU core
+          continue;
         };
+
+        p->time_info.mark_time = get_cycle();
         p->state = READY;
+        // atomic_inc_sched_cnt(&p->sched_cnt);
+        p->pcpu_info.running = cpuid();
       }
       release(&p->lock);
     }
@@ -440,25 +535,40 @@ void scheduler(void) {
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
     } else {
-      while (!!(p = pop_queue(pq))) {
-        acquire(&p->lock);
-        if (p->state == READY) {
+      // while (!!(p = pop_queue(pq))) {
+      p = pop_queue(pq);
 
-          // Switch to chosen process.  It is the process's job
-          // to release its lock and then reacquire it
-          // before jumping back to us.
-          p->state = RUNNING;
-          c->proc = p;
+      acquire(&p->lock);
+      if (p->state == READY) {
+        // Switch to chosen process.  It is the process's job
+        // to release its lock and then reacquire it
+        // before jumping back to us.
+        timen = get_cycle();
+        p->state = RUNNING;
+        c->proc = p;
 
-          // DBG("[cpu %d] swtch to %d\n", cpuid(), p->pid);
-          swtch(&c->context, &p->context);
+        // Add exec time info
+        p->time_info.wait_time += timen - p->time_info.mark_time;
+        p->time_info.ta_time += timen - p->time_info.mark_time;
 
-          // Process is done running for now.
-          // It should have changed its p->state before coming back.
-          c->proc = 0;
-        }
-        release(&p->lock);
+        // If process died when running, we need to collect
+        // the rest running time
+        p->time_info.mark_time = timen;
+
+        // DBG("[cpu %d] swtch to %d\n", cpuid(), p->pid);
+        timen = RUN_TIME(swtch(&c->context, &p->context));
+        // DBG("[cpu %d] timen: %ld\n", cpuid(), timen);
+
+        // Add running time
+        p->time_info.ta_time += timen;
+        c->run_time += timen;
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
       }
+      release(&p->lock);
+      //}
     }
   }
 }
@@ -646,13 +756,19 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len) {
 void procdump(void) {
   static char *states[] = {
       [UNUSED] = "unused", [USED] = "used",        [SLEEPING] = "sleep",
-      [READY] = "ready",   [RUNNABLE] = "runable", [RUNNING] = "run",
+      [READY] = "ready",   [RUNNABLE] = "runable", [RUNNING] = "running",
       [ZOMBIE] = "zombie"};
+
+  static char *cpu_names[] = {"CPU0", "CPU1", "CPU2", "CPU3",
+                              "CPU4", "CPU5", "CPU6", "CPU7"};
+
   struct proc *p;
   char *state;
+  char *cpu_name;
+  pid_t parent_pid = -1;
 
   printf("\n");
-  printf("PID\tSTATE\tNAME\tPRIO\n");
+  printf("PID\tSTATE\tNAME\tPRIO\tCAF\tCR\tTAT(ms)\tWT(ms)\tWT/TAT\tPARENT\n");
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p->state == UNUSED)
       continue;
@@ -660,26 +776,34 @@ void procdump(void) {
       state = states[p->state];
     else
       state = "???";
-    printf("%d\t%s\t%s\t%d", p->pid, state, p->name, (int)p->prio);
+
+    if (p->pcpu_info.affinity == CPU_ANY) {
+      cpu_name = "ANY";
+    } else {
+      cpu_name = cpu_names[p->pcpu_info.affinity];
+    }
+
+    if (p->parent) {
+      parent_pid = p->parent->pid;
+    }
+
+    printf("%d\t%s\t%6s\t%d\t%s\t%d\t%ld\t%ld\t%ld%%\t%d", p->pid, state,
+           p->name, (int)p->prio, cpu_name, p->pcpu_info.running,
+           p->time_info.ta_time / 1000, p->time_info.wait_time / 1000,
+           p->time_info.wait_time * 100 / p->time_info.ta_time, parent_pid);
     printf("\n");
   }
 
-  /*
   push_off();
-  struct cpu *c;
-  struct pqueue *pq;
-  printf("CPUINFO\n");
-  for (c = cpus; c < &cpus[NCPU]; ++c) {
-    pq = c->pq;
-    printf("CPUID: %d\n", (int)(c - cpus));
-    printf("PQUEUE:\n");
-    printf("NO\tPID\tPRIO\n");
-    for (int i = pq->head; i != pq->tail; i = (i + 1) % NPROC) {
-      printf("%d\t%d\t%d\n", i, pq->queue[i]->pid, pq->queue[i]->prio);
-    }
-    printf("\n");
-  }
   printf("\n");
+  struct cpu *c;
+  printf("CPUID\tRUNTIME\n");
+  for (c = cpus; c < &cpus[NCPU]; ++c) {
+    printf("%d\t%ld.%ld ms\n", (int)(c - cpus), c->run_time / 1000,
+           c->run_time % 1000);
+  }
   pop_off();
-  */
+
+  /*
+   */
 }

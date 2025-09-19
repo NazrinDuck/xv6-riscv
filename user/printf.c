@@ -28,6 +28,7 @@ static char digits[] = "0123456789ABCDEF";
 
 static void fputc(struct file_ptr *fp, char c) {
   fp->buffer[fp->head++] = c;
+
   if (fp->head > fp->size || c == '\n') {
     fflush(fp);
   }
@@ -61,7 +62,8 @@ static void printint(struct file_ptr *fp, long long xx, int base, int sgn) {
   if (neg)
     buf[i++] = '-';
 
-  fwrite(fp, buf, i);
+  while (--i >= 0)
+    fputc(fp, buf[i]);
 }
 
 static void printptr(struct file_ptr *fp, uint64 x) {
@@ -70,6 +72,18 @@ static void printptr(struct file_ptr *fp, uint64 x) {
   fputc(fp, 'x');
   for (i = 0; i < (sizeof(uint64) * 2); i++, x <<= 4)
     fputc(fp, digits[x >> (sizeof(uint64) * 8 - 4)]);
+}
+
+int setnbuf(struct file_ptr *fp, int n) {
+  n = n > FILE_BUF_SZ ? FILE_BUF_SZ : n;
+
+  if (!fp || n < 0) {
+    return -1;
+  }
+
+  fp->size = n;
+
+  return n;
 }
 
 int fflush(struct file_ptr *fp) {
@@ -158,5 +172,5 @@ void printf(const char *fmt, ...) {
   va_list ap;
 
   va_start(ap, fmt);
-  vprintf(stdin, fmt, ap);
+  vprintf(stdout, fmt, ap);
 }

@@ -17,4 +17,14 @@ typedef unsigned long uint64;
 
 typedef uint64 pde_t;
 
+#ifndef __MKFS__
+
+typedef int cpuid_t;
+typedef int pid_t;
+
+typedef uint64 tick_t;
+typedef uint64 time_t;
+
+#endif // !__MKFS__
+       //
 #endif // !__TYPES_H

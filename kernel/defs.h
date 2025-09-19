@@ -1,7 +1,10 @@
 #ifndef __DEFS_H
 #define __DEFS_H
 
+#include "./proc.h"
 #include "./riscv.h"
+#include "./trap.h"
+#include "types.h"
 
 struct buf;
 struct context;
@@ -106,12 +109,13 @@ void scheduler(void) __attribute__((noreturn));
 void sched(void);
 void sleep(void *, struct spinlock *);
 void userinit(void);
-int kwait(uint64);
+pid_t kwait(uint64, pid_t, enum wait_mode, enum wait_option);
 void wakeup(void *);
 void yield(void);
 int either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void procdump(void);
+// uint64 atomic_fetch_sched_cnt(uint64 *sched_cnt);
 
 // swtch.S
 void swtch(struct context *, struct context *);
@@ -151,7 +155,7 @@ int fetchaddr(uint64, uint64 *);
 void syscall();
 
 // trap.c
-extern uint ticks;
+extern tick_t ticks;
 void trapinit(void);
 void trapinithart(void);
 extern struct spinlock tickslock;
@@ -195,6 +199,9 @@ void virtio_disk_init(void);
 void virtio_disk_rw(struct buf *, int);
 void virtio_disk_intr(void);
 
+// time.c
+time_t get_cycle();
+
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -204,5 +211,13 @@ void virtio_disk_intr(void);
          "[DEBUG]"                                                             \
          "\x1b[01;34m " msg "\x1b[0m",                                         \
          ##__VA_ARGS__)
+
+// usecond
+#define RUN_TIME(stmt)                                                         \
+  ({                                                                           \
+    time_t __time0 = get_cycle();                                              \
+    (stmt);                                                                    \
+    (((get_cycle() - __time0) % CPU_FREQ) * 1000000 / CPU_FREQ);               \
+  })
 
 #endif // !__DEFS_H

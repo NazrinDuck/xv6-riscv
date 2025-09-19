@@ -23,7 +23,7 @@ sub entry {
 	
 entry("fork");
 entry("exit");
-entry("wait");
+entry("waitid");
 entry("pipe");
 entry("read");
 entry("write");
@@ -43,5 +43,8 @@ entry("sbrk");
 entry("pause");
 entry("uptime");
 entry("wolfie");
-entry("setpriority");
 entry("getpriority");
+entry("setpriority");
+entry("sched_getaffinity");
+entry("sched_setaffinity");
+#entry("gettickinfo");

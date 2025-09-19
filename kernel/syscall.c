@@ -77,7 +77,7 @@ int argstr(int n, char *buf, int max) {
 // Prototypes for the functions that handle system calls.
 extern uint64 sys_fork(void);
 extern uint64 sys_exit(void);
-extern uint64 sys_wait(void);
+extern uint64 sys_waitid(void);
 extern uint64 sys_pipe(void);
 extern uint64 sys_read(void);
 extern uint64 sys_kill(void);
@@ -99,15 +99,20 @@ extern uint64 sys_close(void);
 
 extern uint64 sys_wolfie(void);
 
-extern uint64 sys_setpriority(void);
 extern uint64 sys_getpriority(void);
+extern uint64 sys_setpriority(void);
+
+extern uint64 sys_sched_getaffinity(void);
+extern uint64 sys_sched_setaffinity(void);
+
+extern uint64 sys_gettickinfo(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
 static uint64 (*syscalls[])(void) = {
     [SYS_fork] = sys_fork,
     [SYS_exit] = sys_exit,
-    [SYS_wait] = sys_wait,
+    [SYS_waitid] = sys_waitid,
     [SYS_pipe] = sys_pipe,
     [SYS_read] = sys_read,
     [SYS_kill] = sys_kill,
@@ -129,6 +134,9 @@ static uint64 (*syscalls[])(void) = {
     [SYS_wolfie] = sys_wolfie,
     [SYS_getpriority] = sys_getpriority,
     [SYS_setpriority] = sys_setpriority,
+    [SYS_sched_getaffinity] = sys_sched_getaffinity,
+    [SYS_sched_setaffinity] = sys_sched_setaffinity,
+    //[SYS_gettickinfo] = sys_gettickinfo,
 };
 
 void syscall(void) {

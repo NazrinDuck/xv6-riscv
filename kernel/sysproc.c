@@ -13,6 +13,7 @@ uint64 sys_exit(void) {
   int n;
   argint(0, &n);
   kexit(n);
+  __builtin_unreachable();
   return 0; // not reached
 }
 
@@ -20,10 +21,26 @@ uint64 sys_getpid(void) { return myproc()->pid; }
 
 uint64 sys_fork(void) { return kfork(); }
 
+/*
 uint64 sys_wait(void) {
   uint64 p;
   argaddr(0, &p);
-  return kwait(p);
+  return kwait(p, 0, P_ANY, W_NORMAL);
+}
+*/
+
+uint64 sys_waitid(void) {
+  uint64 addr;
+  pid_t wpid;
+  enum wait_mode mode;
+  enum wait_option option;
+
+  argaddr(0, &addr);
+  argint(1, &wpid);
+  argint(2, (int *)&mode);
+  argint(3, (int *)&option);
+
+  return kwait(addr, wpid, mode, option);
 }
 
 uint64 sys_sbrk(void) {
@@ -52,7 +69,7 @@ uint64 sys_sbrk(void) {
 
 uint64 sys_pause(void) {
   int n;
-  uint ticks0;
+  tick_t ticks0;
 
   argint(0, &n);
   if (n < 0)
@@ -71,7 +88,7 @@ uint64 sys_pause(void) {
 }
 
 uint64 sys_kill(void) {
-  int pid;
+  pid_t pid;
 
   argint(0, &pid);
   return kkill(pid);
@@ -97,9 +114,13 @@ uint64 sys_uptime(void) {
 // return -1 if process not found
 uint64 sys_getpriority(void) {
   struct proc *p;
-  int pid;
+  pid_t pid;
 
   argint(0, &pid);
+
+  if (pid < 0 || pid > MAX_PIDS) {
+    return -1;
+  }
 
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p->pid == pid) {
@@ -121,11 +142,15 @@ uint64 sys_getpriority(void) {
 // return -1 if process not found
 uint64 sys_setpriority(void) {
   struct proc *p;
-  int pid;
+  pid_t pid;
   uint8 value;
 
   argint(0, &pid);
   arguint8(1, &value);
+
+  if (pid < 0 || pid > MAX_PIDS) {
+    return -1;
+  }
 
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p->pid == pid) {
@@ -136,3 +161,95 @@ uint64 sys_setpriority(void) {
 
   return -1;
 }
+
+// cpuid_t sched_getaffinity(pid_t)
+//
+// required arg `pid`
+//
+// get the CPU affinity of given pid's process
+//
+// return cpuid if success
+//
+// return -1 if process not found
+uint64 sys_sched_getaffinity(void) {
+  struct proc *p;
+  pid_t pid;
+
+  argint(0, &pid);
+
+  if (pid < 0 || pid > MAX_PIDS) {
+    return -1;
+  }
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->pid == pid) {
+      return p->pcpu_info.affinity;
+    }
+  }
+
+  return -1;
+}
+
+// int sched_setaffinity(pid_t, cpuid_t)
+//
+// required arg `pid` and `cpuid`
+//
+// set the CPU affinity of given pid's process to `cpuid`
+//
+// return 0 if success
+//
+// return -1 if process not found
+uint64 sys_sched_setaffinity(void) {
+  struct proc *p;
+  pid_t pid;
+  cpuid_t cpuid;
+
+  argint(0, &pid);
+  argint(1, &cpuid);
+
+  if (pid < 0 || pid > MAX_PIDS || cpuid < 0 || cpuid > NCPU) {
+    return -1;
+  }
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->pid == pid) {
+      p->pcpu_info.affinity = cpuid;
+      return 0;
+    }
+  }
+
+  return -1;
+}
+
+/*
+// uint64 sched_gettickinfo(pid_t)
+//
+// required arg `pid` and `struct *tick_info`
+//
+// return 0 if success
+//
+// return -1 if process not found
+uint64 sys_gettickinfo(void) {
+  struct proc *p;
+  struct proc *curr = myproc();
+
+  pid_t pid;
+  uint64 tick_info_addr;
+
+  argint(0, &pid);
+  argaddr(1, &tick_info_addr);
+
+  if (pid < 0 || pid > MAX_PIDS || tick_info_addr == 0) {
+    return -1;
+  }
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->pid == pid) {
+      return copyout(curr->pagetable, tick_info_addr, (void *)&p->time_info,
+                     sizeof(struct time_info));
+    }
+  }
+
+  return -1;
+}
+*/

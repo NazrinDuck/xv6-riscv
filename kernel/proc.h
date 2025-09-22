@@ -8,9 +8,7 @@
 #include "spinlock.h"
 #include "types.h"
 
-#define MAX_PIDS (65536)
-
-#define MAX_QUEUE (NPROC)
+#define PERCENTAGE(x, y) (x * 100 / y)
 
 enum wait_mode { P_PID, P_ANY };
 
@@ -42,18 +40,20 @@ struct pqueue {
   uint64 tail;
 };
 
-#define CPU_ANY (-100)
-
-#define CPU(x) ((cpuid_t)(x > (NCPU - 1) ? (NCPU - 1) : x))
-
-#define CPU0 ((cpuid_t)0)
-#define CPU1 ((cpuid_t)1)
-#define CPU2 ((cpuid_t)2)
-#define CPU3 ((cpuid_t)3)
-#define CPU4 ((cpuid_t)4)
-#define CPU5 ((cpuid_t)5)
-#define CPU6 ((cpuid_t)6)
-#define CPU7 ((cpuid_t)7)
+struct channel {
+  struct spinlock lock;
+  void *chan;
+  union {
+    struct proc *hp;
+    struct proc *lp;
+  };
+  union {
+    uint8 hprio;
+    uint8 lprio;
+  };
+  uint8 is_swap;
+  uint refcnt;
+};
 
 // Per-CPU state.
 struct cpu {
@@ -134,16 +134,6 @@ struct pcpu_info {
   cpuid_t running;
 };
 
-struct time_info {
-  time_t mark_time;
-  // wait ticks
-  // aka WT
-  time_t wait_time;
-  // turn around ticks
-  // aka TAT
-  time_t ta_time;
-};
-
 // Used in user space
 struct pinfo_ex {
   // Return state
@@ -163,9 +153,19 @@ struct proc {
   // p->lock must be held when using these:
   enum procstate state; // Process state
 
-  uint8 prio; // Process Priority 0~255
-              // A **higher value** stands for a higher priority
-              // Default 128
+  // Process Priority 0~255
+  // A **higher value** stands for a higher priority
+  // Default 128
+  struct priority {
+    // TODO: We need a lock while the process is
+    //  in the priority queue or priority donation
+    plock_t lock;
+    uint8 is_swap;
+    uint8 prio;
+    int8 nice;
+  } priority;
+
+  struct channel *channel;
 
   void *chan; // If non-zero, sleeping on chan
   int killed; // If non-zero, have been killed
@@ -176,7 +176,16 @@ struct proc {
   struct pcpu_info pcpu_info;
 
   // time information abult WT and TAT
-  struct time_info time_info;
+  struct time_info {
+    time_t mark_time;
+    // wait ticks
+    // aka WT
+    time_t wait_time;
+    // turn around ticks
+    // aka TAT
+    time_t ta_time;
+  } time_info;
+  // struct time_info time_info;
 
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process

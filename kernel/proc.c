@@ -11,10 +11,11 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
+struct channel channels[NCHAN];
+
 struct proc *initproc;
 
 int nextpid = 1;
-struct spinlock pid_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
@@ -46,12 +47,24 @@ void proc_mapstacks(pagetable_t kpgtbl) {
 void procinit(void) {
   struct proc *p;
 
-  initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
     p->kstack = KSTACK((int)(p - proc));
+  }
+}
+
+// initialize the channel table.
+void channelsinit(void) {
+  struct channel *ch;
+  for (ch = channels; ch < &channels[NCHAN]; ch++) {
+    initlock(&ch->lock, "channel");
+    ch->chan = 0;
+    ch->is_swap = 0;
+    ch->refcnt = 0;
+    ch->hp = 0;
+    ch->hprio = 0;
   }
 }
 
@@ -80,16 +93,76 @@ struct proc *myproc(void) {
   return p;
 }
 
-int allocpid() {
-  int pid;
-
-  acquire(&pid_lock);
-  pid = nextpid;
-  nextpid = nextpid + 1;
-  release(&pid_lock);
-
-  return pid;
+static struct channel *findchan(void *chan) {
+  struct channel *ch;
+  for (ch = channels; ch < &channels[NCHAN]; ch++) {
+    if (ch->chan == chan) {
+      //__atomic_fetch_add(&ch->refcnt, 1, __ATOMIC_ACQ_REL);
+      return ch;
+    }
+  }
+  return 0;
 }
+
+static struct channel *allocchan(void *chan, struct proc *p) {
+  struct channel *ch;
+  if ((ch = findchan(chan)) != 0) {
+    __atomic_fetch_add(&ch->refcnt, 1, __ATOMIC_ACQ_REL);
+
+    acquire(&ch->lock);
+    /*
+    if (p->priority.prio >= ch->hprio) {
+      ch->hprio = p->priority.prio;
+      ch->hp = p;
+    }
+    */
+    release(&ch->lock);
+    return ch;
+  }
+
+  for (ch = channels; ch < &channels[NCHAN]; ch++) {
+    if (ch->chan == 0) {
+      __atomic_fetch_add(&ch->refcnt, 1, __ATOMIC_ACQ_REL);
+
+      acquire(&ch->lock);
+      ch->chan = chan;
+      /*
+        if (p->priority.prio >= ch->hprio) {
+          ch->hprio = p->priority.prio;
+          ch->hp = p;
+        }
+      */
+      release(&ch->lock);
+      return ch;
+    }
+  }
+  return 0;
+}
+
+static void releasechan(void *chan) {
+  struct channel *ch;
+  for (ch = channels; ch < &channels[NCHAN]; ch++) {
+    if (ch->chan == chan) {
+      if (__atomic_sub_fetch(&ch->refcnt, 1, __ATOMIC_ACQ_REL) == 0) {
+        acquire(&ch->lock);
+        if (ch->is_swap == 1) {
+          DBG("CHID: %d\tPRIO: %d\tPID: %p\n", (int)(ch - channels), ch->lprio,
+              ch->lp);
+          panic("Priority Leak!");
+        }
+        ch->chan = 0;
+        ch->hprio = 0;
+        ch->hp = 0;
+        release(&ch->lock);
+      }
+      return;
+    }
+  }
+  // Release not found implies a panic
+  panic("releasechan: release channel leak");
+}
+
+int allocpid() { return __atomic_fetch_add(&nextpid, 1, __ATOMIC_RELAXED); }
 
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
@@ -120,7 +193,9 @@ found:
   }
 
   // Set default priority
-  p->prio = DEFAULT_PRIO;
+  memset(&p->priority, 0, sizeof(p->priority));
+  p->priority.prio = DEFAULT_PRIO;
+  p->priority.nice = 0;
 
   // Set CPU affinity
   p->pcpu_info.affinity = CPU_ANY;
@@ -165,6 +240,7 @@ static void freeproc(struct proc *p) {
   p->pcpu_info.affinity = CPU_ANY;
   p->pcpu_info.running = -1;
   memset(&p->time_info, 0, sizeof(struct time_info));
+  memset(&p->priority, 0, sizeof(struct priority));
   p->state = UNUSED;
 }
 
@@ -267,7 +343,8 @@ int kfork(void) {
   np->trapframe->a0 = 0;
 
   // Inherite priority
-  np->prio = p->prio;
+  np->priority.prio = p->priority.prio;
+  np->priority.nice = 0;
 
   // Set to default CPU strategy
   np->pcpu_info.affinity = CPU_ANY;
@@ -391,12 +468,12 @@ pid_t kwait(uint64 addr, pid_t wpid, enum wait_mode mode,
     for (pp = proc; pp < &proc[NPROC]; pp++) {
       if (pp->parent == p) {
         // make sure the child isn't still in exit() or swtch().
-        acquire(&pp->lock);
 
         if (mode == P_PID && pp->pid != wpid) {
-          release(&pp->lock);
           continue;
         }
+
+        acquire(&pp->lock);
 
         havekids = 1;
         if (pp->state == ZOMBIE) {
@@ -465,14 +542,6 @@ void initpq(struct cpu *c) {
   return;
 }
 
-uint64 atomic_inc_sched_cnt(uint64 *sched_cnt) {
-  return __sync_fetch_and_add(sched_cnt, 1);
-}
-
-uint64 atomic_fetch_sched_cnt(uint64 *sched_cnt) {
-  return __sync_fetch_and_add(sched_cnt, 0);
-}
-
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -481,7 +550,7 @@ uint64 atomic_fetch_sched_cnt(uint64 *sched_cnt) {
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
 void scheduler(void) {
-  struct proc *p;
+  struct proc *p, *last;
   cpuid_t affinity;
   time_t timen;
   struct cpu *c = mycpu();
@@ -499,9 +568,6 @@ void scheduler(void) {
     intr_on();
     intr_off();
 
-    // atomic_inc_sched_cnt(&c->sched_cnt);
-
-    // int found = 0;
     for (p = proc; p < &proc[NPROC]; p++) {
       affinity = p->pcpu_info.affinity;
 
@@ -514,8 +580,8 @@ void scheduler(void) {
       }
 
       acquire(&p->lock);
+      timen = get_cycle();
       if (p->state == RUNNABLE) {
-        // DBG("[cpu %d] push %d\n", cpuid(), p->pid);
 
         if (push_queue(pq, p) < 0) {
           // panic("scheduler: proc queue is full");
@@ -523,12 +589,42 @@ void scheduler(void) {
           continue;
         };
 
-        p->time_info.mark_time = get_cycle();
+        acquire_plock(&p->priority.lock);
+        p->time_info.mark_time = timen;
         p->state = READY;
-        // atomic_inc_sched_cnt(&p->sched_cnt);
         p->pcpu_info.running = cpuid();
       }
       release(&p->lock);
+    }
+
+    // Deal with the starvation
+    //
+    // Use priority aging, when the last process waits too long
+    // and it's wait time percentage is too high, we will
+    // increase it's priority(nice) and pop it, wait next round
+    // scheduler.
+    if (length_queue(pq) > 1) {
+      last = last_queue(pq);
+      timen = get_cycle();
+
+      // TODO: Improve this algorithm, make it more flexiable
+      if (last != 0 && last->priority.nice < 127 &&
+          last->time_info.wait_time + timen - last->time_info.mark_time >
+              AGING_WAIT_TIME &&
+          PERCENTAGE(last->time_info.wait_time + timen -
+                         last->time_info.mark_time,
+                     last->time_info.ta_time) > AGING_RATIO) {
+        pop_back_queue(pq);
+        release_plock(&last->priority.lock);
+
+        acquire(&last->lock);
+
+        last->priority.nice =
+            last->priority.nice + 10 > 127 ? 127 : last->priority.nice + 10;
+        last->state = RUNNABLE;
+
+        release(&last->lock);
+      }
     }
 
     if (is_empty(pq)) {
@@ -536,7 +632,7 @@ void scheduler(void) {
       asm volatile("wfi");
     } else {
       // while (!!(p = pop_queue(pq))) {
-      p = pop_queue(pq);
+      p = pop_front_queue(pq);
 
       acquire(&p->lock);
       if (p->state == READY) {
@@ -544,6 +640,7 @@ void scheduler(void) {
         // to release its lock and then reacquire it
         // before jumping back to us.
         timen = get_cycle();
+        release_plock(&p->priority.lock);
         p->state = RUNNING;
         c->proc = p;
 
@@ -555,9 +652,9 @@ void scheduler(void) {
         // the rest running time
         p->time_info.mark_time = timen;
 
-        // DBG("[cpu %d] swtch to %d\n", cpuid(), p->pid);
+        p->priority.nice = 0;
+
         timen = RUN_TIME(swtch(&c->context, &p->context));
-        // DBG("[cpu %d] timen: %ld\n", cpuid(), timen);
 
         // Add running time
         p->time_info.ta_time += timen;
@@ -623,15 +720,14 @@ void forkret(void) {
     // be run from main().
     fsinit(ROOTDEV);
 
-    first = 0;
     // ensure other cores see first=0.
-    __sync_synchronize();
+    __atomic_store_n(&first, 0, __ATOMIC_SEQ_CST);
 
     // We can invoke kexec() now that file system is initialized.
     // Put the return value (argc) of kexec into a0.
     p->trapframe->a0 = kexec("/init", (char *[]){"/init", 0});
     if (p->trapframe->a0 == -1) {
-      panic("exec");
+      panic("forkret: exec init");
     }
   }
 
@@ -645,7 +741,12 @@ void forkret(void) {
 // Sleep on channel chan, releasing condition lock lk.
 // Re-acquires lk when awakened.
 void sleep(void *chan, struct spinlock *lk) {
-  struct proc *p = myproc();
+  struct proc *p = myproc(), *pp, *hp = 0;
+
+  struct channel *channel;
+  channel = allocchan(chan, p);
+  uint8 hprio = 0;
+  // uint8 tprio = 0;
 
   // Must acquire p->lock in order to
   // change p->state and then call sched.
@@ -658,12 +759,55 @@ void sleep(void *chan, struct spinlock *lk) {
   release(lk);
 
   // Go to sleep.
+  p->channel = channel;
+
   p->chan = chan;
   p->state = SLEEPING;
 
+  if (channel->is_swap == 0) {
+    for (pp = proc; pp < &proc[NPROC]; pp++) {
+      if (pp != p) {
+        acquire(&pp->lock);
+      }
+
+      if (pp->state == SLEEPING && pp->chan == chan &&
+          pp->priority.prio > hprio) {
+        hp = pp;
+        hprio = pp->priority.prio;
+      }
+
+      if (pp != p) {
+        release(&pp->lock);
+      }
+    }
+
+    if (hp != 0) {
+      acquire(&channel->lock);
+      channel->hp = hp;
+      channel->hprio = hprio;
+      release(&channel->lock);
+    }
+  }
+
   sched();
 
+  if (p->chan != 0) {
+    channel = findchan(p->chan);
+    if (channel->is_swap == 1 && channel->lp != 0 &&
+        channel->lp->priority.is_swap == 1) {
+      acquire(&channel->lock);
+      channel->lp->priority.prio = channel->lprio;
+      channel->lp->priority.is_swap = 0;
+      channel->hprio = 0;
+      channel->hp = 0;
+      channel->is_swap = 0;
+      release(&channel->lock);
+    }
+  }
+
   // Tidy up.
+  releasechan(chan);
+  p->channel = 0;
   p->chan = 0;
 
   // Reacquire original lock.
@@ -675,6 +819,35 @@ void sleep(void *chan, struct spinlock *lk) {
 // Caller should hold the condition lock.
 void wakeup(void *chan) {
   struct proc *p;
+  struct channel *channel = findchan(chan);
+  uint8 tprio = 0;
+
+  if (channel == 0) {
+    return;
+  }
+
+  p = myproc();
+  if (p != 0) {
+    // Swap priority: priority donation
+    if (channel->refcnt > 0 && channel->is_swap == 0 && channel->hp != 0 &&
+        channel->hp != p && !holding_plock(&p->priority.prio) &&
+        p->priority.is_swap == 0) {
+      acquire(&channel->lock);
+      // DBG("SWAP TRIGGER!\n");
+
+      channel->is_swap = 1;
+      p->priority.is_swap = 1;
+
+      tprio = channel->hprio;
+      channel->lprio = p->priority.prio;
+      p->priority.prio = tprio;
+
+      channel->lp = p;
+
+      release(&channel->lock);
+      // procdump();
+    }
+  }
 
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p != myproc()) {
@@ -710,18 +883,11 @@ int kkill(int pid) {
 }
 
 void setkilled(struct proc *p) {
-  acquire(&p->lock);
-  p->killed = 1;
-  release(&p->lock);
+  __atomic_store_n(&p->killed, 1, __ATOMIC_SEQ_CST);
 }
 
 int killed(struct proc *p) {
-  int k;
-
-  acquire(&p->lock);
-  k = p->killed;
-  release(&p->lock);
-  return k;
+  return __atomic_load_n(&p->killed, __ATOMIC_RELAXED);
 }
 
 // Copy to either a user address, or kernel address,
@@ -763,12 +929,14 @@ void procdump(void) {
                               "CPU4", "CPU5", "CPU6", "CPU7"};
 
   struct proc *p;
+  struct channel *channel;
   char *state;
   char *cpu_name;
   pid_t parent_pid = -1;
 
   printf("\n");
-  printf("PID\tSTATE\tNAME\tPRIO\tCAF\tCR\tTAT(ms)\tWT(ms)\tWT/TAT\tPARENT\n");
+  printf("PID\tSTATE\tNAME\tPRIO\tNICE\tIS_SWAP\tCAF\tCR\tTAT(ms)\tWT(ms)\tWT/"
+         "TAT\tPARENT\n");
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p->state == UNUSED)
       continue;
@@ -787,8 +955,9 @@ void procdump(void) {
       parent_pid = p->parent->pid;
     }
 
-    printf("%d\t%s\t%6s\t%d\t%s\t%d\t%ld\t%ld\t%ld%%\t%d", p->pid, state,
-           p->name, (int)p->prio, cpu_name, p->pcpu_info.running,
+    printf("%d\t%s\t%6s\t%d\t%d\t%d\t%s\t%d\t%ld\t%ld\t%ld%%\t%d", p->pid,
+           state, p->name, (int)p->priority.prio, (int)p->priority.nice,
+           (int)p->priority.is_swap, cpu_name, p->pcpu_info.running,
            p->time_info.ta_time / 1000, p->time_info.wait_time / 1000,
            p->time_info.wait_time * 100 / p->time_info.ta_time, parent_pid);
     printf("\n");
@@ -803,7 +972,28 @@ void procdump(void) {
            c->run_time % 1000);
   }
   pop_off();
+  printf("\n");
 
-  /*
-   */
+  char *lock = "???";
+
+  printf("CHANID\tLOCK\tPID\tPRIO\tREFCNT\tIS_SWAP\n");
+  for (channel = channels; channel < &channels[NCHAN]; ++channel) {
+    if (channel->chan == 0) {
+      continue;
+    }
+
+    if ((struct proc *)channel->chan >= proc &&
+        (struct proc *)channel->chan < &proc[NPROC]) {
+      lock = "W_PROC";
+    } else if (channel->chan == &ticks) {
+      lock = "TICKS";
+    } else {
+      lock = "???";
+    }
+    printf("%d\t%s\t%d\t%d\t%d\t%d", (int)(channel - channels), lock,
+           channel->hp != 0 ? channel->hp->pid : -1, channel->hprio,
+           channel->refcnt, channel->is_swap);
+    printf("\n");
+  }
+  printf("\n");
 }

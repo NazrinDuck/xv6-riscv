@@ -87,6 +87,15 @@ uint64 sys_pause(void) {
   return 0;
 }
 
+uint64 sys_nanosleep(void) {
+  time_t n;
+  arguint64(0, &n);
+
+  // TODO: Venez l'implemer
+  panic("unimplement");
+  return 0;
+}
+
 uint64 sys_kill(void) {
   pid_t pid;
 
@@ -124,7 +133,7 @@ uint64 sys_getpriority(void) {
 
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p->pid == pid) {
-      return p->prio;
+      return p->priority.prio;
     }
   }
 
@@ -154,7 +163,11 @@ uint64 sys_setpriority(void) {
 
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p->pid == pid) {
-      p->prio = value;
+      if (!holding_plock(&p->priority.lock) && !p->priority.is_swap) {
+        p->priority.prio = value;
+      } else {
+        return -2;
+      }
       return 0;
     }
   }

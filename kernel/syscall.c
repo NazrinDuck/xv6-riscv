@@ -60,6 +60,9 @@ void argint(int n, int *ip) { *ip = argraw(n); }
 // Fetch the nth unsigned 32-bit system call argument.
 void arguint(int n, uint *ip) { *ip = argraw(n); }
 
+// Fetch the nth unsigned 64-bit system call argument.
+void arguint64(int n, uint64 *ip) { *ip = argraw(n); }
+
 // Retrieve an argument as a pointer.
 // Doesn't check for legality, since
 // copyin/copyout will do that.
@@ -105,7 +108,7 @@ extern uint64 sys_setpriority(void);
 extern uint64 sys_sched_getaffinity(void);
 extern uint64 sys_sched_setaffinity(void);
 
-extern uint64 sys_gettickinfo(void);
+extern uint64 sys_nanosleep(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -136,7 +139,7 @@ static uint64 (*syscalls[])(void) = {
     [SYS_setpriority] = sys_setpriority,
     [SYS_sched_getaffinity] = sys_sched_getaffinity,
     [SYS_sched_setaffinity] = sys_sched_setaffinity,
-    //[SYS_gettickinfo] = sys_gettickinfo,
+    [SYS_nanosleep] = sys_nanosleep,
 };
 
 void syscall(void) {

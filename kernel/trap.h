@@ -1,6 +1,8 @@
 #ifndef __TRAP_H
 #define __TRAP_H
 
+// TODO: Re-adjustment the time
+
 #define TICKS_PER_SEC (15)
 #define CPU_FREQ (12500000)
 

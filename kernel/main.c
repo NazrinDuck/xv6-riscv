@@ -20,7 +20,7 @@ static char *banner = " ___    ___  ___      ___  ________     " LR
 #undef LR
 
 // start() jumps here in supervisor mode on all CPUs.
-void main() {
+int main() {
   if (cpuid() == 0) {
     consoleinit();
     printfinit();
@@ -55,4 +55,5 @@ void main() {
   }
 
   scheduler();
+  __builtin_unreachable();
 }

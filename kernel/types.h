@@ -25,6 +25,8 @@ typedef int pid_t;
 typedef uint64 tick_t;
 typedef uint64 time_t;
 
+typedef uint8 plock_t;
+
 #endif // !__MKFS__
        //
 #endif // !__TYPES_H

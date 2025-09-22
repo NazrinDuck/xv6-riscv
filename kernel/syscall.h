@@ -34,4 +34,6 @@
 #define SYS_sched_getaffinity 25
 #define SYS_sched_setaffinity 26
 
+#define SYS_nanosleep 27
+
 #endif // !__SYSCALL_H

@@ -88,8 +88,14 @@ void printfinit(void);
 
 // pqueue.c
 int push_queue(struct pqueue *, struct proc *);
-struct proc *pop_queue(struct pqueue *);
+struct proc *pop_front_queue(struct pqueue *);
+struct proc *pop_back_queue(struct pqueue *);
+struct proc *last_queue(struct pqueue *);
 int is_empty(struct pqueue *);
+int length_queue(struct pqueue *);
+void acquire_plock(plock_t *);
+void release_plock(plock_t *);
+int holding_plock(plock_t *);
 
 // proc.c
 int cpuid(void);
@@ -148,6 +154,7 @@ void arguint8(int, uint8 *);
 void argint8(int, int8 *);
 void argint(int, int *);
 void arguint(int, uint *);
+void arguint64(int, uint64 *);
 int argstr(int, char *, int);
 void argaddr(int, uint64 *);
 int fetchstr(uint64, char *, int);
@@ -208,9 +215,9 @@ time_t get_cycle();
 // for debug print
 #define DBG(msg, ...)                                                          \
   printf("\x1b[01;31m"                                                         \
-         "[DEBUG]"                                                             \
+         "[DEBUG] %s |"                                                        \
          "\x1b[01;34m " msg "\x1b[0m",                                         \
-         ##__VA_ARGS__)
+         __FUNCTION__, ##__VA_ARGS__)
 
 // usecond
 #define RUN_TIME(stmt)                                                         \

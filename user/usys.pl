@@ -47,4 +47,4 @@ entry("getpriority");
 entry("setpriority");
 entry("sched_getaffinity");
 entry("sched_setaffinity");
-#entry("gettickinfo");
+entry("nanosleep");

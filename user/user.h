@@ -40,6 +40,7 @@ uint8 getpriority(pid_t);
 int setpriority(pid_t, uint8);
 cpuid_t sched_getaffinity(pid_t);
 int sched_setaffinity(pid_t, cpuid_t);
+int nanosleep(time_t);
 
 // ulib.c
 int stat(const char *, struct stat *);

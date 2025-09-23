@@ -1,13 +1,9 @@
 #define LF "\n"
 #define ESC "\033"
 
-#include "./wolfie.h"
+char wolfie_end[5] = {ESC "[0m"};
 
-#define WOLFIE_MIN (WOLFIE_SZ / 10)
-
-char wolfie_end[4] = {ESC "[0m"};
-
-char wolfie_buf[WOLFIE_SZ] = {
+char wolfie_buf[] = {
     "" ESC "[01;38;2;252;252;252m░" ESC "[01;38;2;252;252;252m░" ESC
     "[01;38;2;252;252;"
     "252m░" ESC "[01;38;2;252;252;252m░" ESC "[01;38;2;252;252;252m░" ESC

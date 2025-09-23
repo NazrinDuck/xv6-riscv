@@ -42,6 +42,7 @@ struct pqueue {
 
 struct channel {
   struct spinlock lock;
+  // If non-zero, sleeping on chan
   void *chan;
   union {
     struct proc *hp;
@@ -52,6 +53,7 @@ struct channel {
     uint8 lprio;
   };
   uint8 is_swap;
+  // uint8 is_used;
   uint refcnt;
 };
 
@@ -167,7 +169,6 @@ struct proc {
 
   struct channel *channel;
 
-  void *chan; // If non-zero, sleeping on chan
   int killed; // If non-zero, have been killed
   int xstate; // Exit status to be returned to parent's wait
   pid_t pid;  // Process ID

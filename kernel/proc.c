@@ -49,6 +49,7 @@ void procinit(void) {
 
   initlock(&wait_lock, "wait_lock");
   for (p = proc; p < &proc[NPROC]; p++) {
+    memset(p, 0, sizeof(struct proc));
     initlock(&p->lock, "proc");
     p->state = UNUSED;
     p->kstack = KSTACK((int)(p - proc));
@@ -96,8 +97,7 @@ struct proc *myproc(void) {
 static struct channel *findchan(void *chan) {
   struct channel *ch;
   for (ch = channels; ch < &channels[NCHAN]; ch++) {
-    if (ch->chan == chan) {
-      //__atomic_fetch_add(&ch->refcnt, 1, __ATOMIC_ACQ_REL);
+    if (ch->chan == chan && ch->refcnt > 0) {
       return ch;
     }
   }
@@ -107,59 +107,54 @@ static struct channel *findchan(void *chan) {
 static struct channel *allocchan(void *chan, struct proc *p) {
   struct channel *ch;
   if ((ch = findchan(chan)) != 0) {
-    __atomic_fetch_add(&ch->refcnt, 1, __ATOMIC_ACQ_REL);
-
     acquire(&ch->lock);
-    /*
-    if (p->priority.prio >= ch->hprio) {
-      ch->hprio = p->priority.prio;
-      ch->hp = p;
-    }
-    */
+    __atomic_fetch_add(&ch->refcnt, 1, __ATOMIC_ACQ_REL);
     release(&ch->lock);
     return ch;
   }
 
   for (ch = channels; ch < &channels[NCHAN]; ch++) {
-    if (ch->chan == 0) {
+    acquire(&ch->lock);
+    if (ch->refcnt == 0) {
       __atomic_fetch_add(&ch->refcnt, 1, __ATOMIC_ACQ_REL);
-
-      acquire(&ch->lock);
       ch->chan = chan;
-      /*
-        if (p->priority.prio >= ch->hprio) {
-          ch->hprio = p->priority.prio;
-          ch->hp = p;
-        }
-      */
       release(&ch->lock);
       return ch;
     }
+    release(&ch->lock);
   }
   return 0;
 }
 
-static void releasechan(void *chan) {
-  struct channel *ch;
-  for (ch = channels; ch < &channels[NCHAN]; ch++) {
-    if (ch->chan == chan) {
-      if (__atomic_sub_fetch(&ch->refcnt, 1, __ATOMIC_ACQ_REL) == 0) {
-        acquire(&ch->lock);
-        if (ch->is_swap == 1) {
-          DBG("CHID: %d\tPRIO: %d\tPID: %p\n", (int)(ch - channels), ch->lprio,
-              ch->lp);
-          panic("Priority Leak!");
-        }
-        ch->chan = 0;
-        ch->hprio = 0;
-        ch->hp = 0;
-        release(&ch->lock);
-      }
-      return;
-    }
+static void releasechan(struct channel *ch) {
+  if (ch == 0) {
+    // Release not found implies a panic
+    panic("releasechan: release channel leak");
   }
-  // Release not found implies a panic
-  panic("releasechan: release channel leak");
+
+  acquire(&ch->lock);
+
+  if (ch->is_swap == 1 && ch->lp != 0 && ch->lp->priority.is_swap == 1) {
+    ch->lp->priority.prio = ch->lprio;
+    ch->lp->priority.is_swap = 0;
+
+    ch->hprio = 0;
+    ch->hp = 0;
+    ch->is_swap = 0;
+  }
+
+  if (__atomic_sub_fetch(&ch->refcnt, 1, __ATOMIC_ACQ_REL) == 0) {
+    if (ch->is_swap == 1) {
+      DBG("CHID: %d\tPRIO: %d\tPID: %d\n", (int)(ch - channels), ch->lprio,
+          ch->lp->pid);
+      panic("Priority Leak!");
+    }
+
+    ch->chan = 0;
+    ch->hprio = 0;
+    ch->hp = 0;
+  }
+  release(&ch->lock);
 }
 
 int allocpid() { return __atomic_fetch_add(&nextpid, 1, __ATOMIC_RELAXED); }
@@ -196,6 +191,8 @@ found:
   memset(&p->priority, 0, sizeof(p->priority));
   p->priority.prio = DEFAULT_PRIO;
   p->priority.nice = 0;
+
+  p->channel = (void *)0;
 
   // Set CPU affinity
   p->pcpu_info.affinity = CPU_ANY;
@@ -234,7 +231,7 @@ static void freeproc(struct proc *p) {
   p->pid = 0;
   p->parent = 0;
   p->name[0] = 0;
-  p->chan = 0;
+  p->channel = 0;
   p->killed = 0;
   p->xstate = 0;
   p->pcpu_info.affinity = CPU_ANY;
@@ -343,7 +340,9 @@ int kfork(void) {
   np->trapframe->a0 = 0;
 
   // Inherite priority
-  np->priority.prio = p->priority.prio;
+  if (p->priority.is_swap == 0) {
+    np->priority.prio = p->priority.prio;
+  }
   np->priority.nice = 0;
 
   // Set to default CPU strategy
@@ -429,6 +428,21 @@ void kexit(int status) {
   p->state = ZOMBIE;
 
   release(&wait_lock);
+
+  // TODO: C'est tres ideux, Quelqu'un viens l'Optimizer vitement
+  if (p->priority.is_swap == 1) {
+    struct channel *ch;
+    for (ch = channels; ch < &channels[NCHAN]; ch++) {
+      if (ch->refcnt > 0 && ch->lp == p && ch->is_swap == 1) {
+        ch->lp->priority.prio = ch->lprio;
+        ch->lp->priority.is_swap = 0;
+
+        ch->hprio = 0;
+        ch->hp = 0;
+        ch->is_swap = 0;
+      }
+    }
+  }
 
   // Jump into the scheduler, never to return.
   sched();
@@ -656,6 +670,7 @@ void scheduler(void) {
 
         timen = RUN_TIME(swtch(&c->context, &p->context));
 
+        p->pcpu_info.running = -1;
         // Add running time
         p->time_info.ta_time += timen;
         c->run_time += timen;
@@ -738,13 +753,46 @@ void forkret(void) {
   ((void (*)(uint64))trampoline_userret)(satp);
 }
 
+static void swap_priority(void *chan) {
+  struct proc *p;
+  struct channel *channel = findchan(chan);
+  uint8 tprio = 0;
+
+  if (channel == 0) {
+    return;
+  }
+
+  p = myproc();
+  if (p == 0) {
+    return;
+  }
+
+  acquire(&p->lock);
+  // Swap priority: priority donation
+  if (channel->refcnt > 0 && channel->is_swap == 0 && channel->hp != 0 &&
+      channel->hp != p && !holding_plock(&p->priority.prio) &&
+      p->priority.is_swap == 0) {
+    acquire(&channel->lock);
+
+    channel->is_swap = 1;
+    p->priority.is_swap = 1;
+
+    tprio = channel->hprio;
+    channel->lprio = p->priority.prio;
+    p->priority.prio = tprio;
+
+    channel->lp = p;
+
+    release(&channel->lock);
+  }
+  release(&p->lock);
+  // procdump();
+}
+
 // Sleep on channel chan, releasing condition lock lk.
 // Re-acquires lk when awakened.
 void sleep(void *chan, struct spinlock *lk) {
   struct proc *p = myproc(), *pp, *hp = 0;
-
-  struct channel *channel;
-  channel = allocchan(chan, p);
   uint8 hprio = 0;
   // uint8 tprio = 0;
 
@@ -758,57 +806,55 @@ void sleep(void *chan, struct spinlock *lk) {
   acquire(&p->lock); // DOC: sleeplock1
   release(lk);
 
+  struct channel *channel;
+  channel = allocchan(chan, p);
+
   // Go to sleep.
   p->channel = channel;
 
-  p->chan = chan;
+  // p->chan = chan;
   p->state = SLEEPING;
 
   if (channel->is_swap == 0) {
+    acquire(&channel->lock);
     for (pp = proc; pp < &proc[NPROC]; pp++) {
-      if (pp != p) {
-        acquire(&pp->lock);
-      }
 
-      if (pp->state == SLEEPING && pp->chan == chan &&
-          pp->priority.prio > hprio) {
+      if (pp->state == SLEEPING && pp->channel != 0 &&
+          pp->channel->chan == chan && pp->priority.prio > hprio) {
         hp = pp;
         hprio = pp->priority.prio;
       }
-
-      if (pp != p) {
-        release(&pp->lock);
-      }
     }
 
-    if (hp != 0) {
-      acquire(&channel->lock);
+    if (hp != 0 && channel->is_swap == 0) {
       channel->hp = hp;
       channel->hprio = hprio;
-      release(&channel->lock);
     }
+    release(&channel->lock);
   }
 
   sched();
 
-  if (p->chan != 0) {
-    channel = findchan(p->chan);
+  if (p->channel != 0) {
+    /*
+    channel = p->channel;
+    acquire(&channel->lock);
     if (channel->is_swap == 1 && channel->lp != 0 &&
         channel->lp->priority.is_swap == 1) {
-      acquire(&channel->lock);
       channel->lp->priority.prio = channel->lprio;
       channel->lp->priority.is_swap = 0;
+
       channel->hprio = 0;
       channel->hp = 0;
       channel->is_swap = 0;
-      release(&channel->lock);
     }
-  }
+    release(&channel->lock);
+    */
 
-  // Tidy up.
-  releasechan(chan);
-  p->channel = 0;
-  p->chan = 0;
+    // Tidy up.
+    releasechan(p->channel);
+    p->channel = 0x0;
+  }
 
   // Reacquire original lock.
   release(&p->lock);
@@ -819,40 +865,13 @@ void sleep(void *chan, struct spinlock *lk) {
 // Caller should hold the condition lock.
 void wakeup(void *chan) {
   struct proc *p;
-  struct channel *channel = findchan(chan);
-  uint8 tprio = 0;
 
-  if (channel == 0) {
-    return;
-  }
-
-  p = myproc();
-  if (p != 0) {
-    // Swap priority: priority donation
-    if (channel->refcnt > 0 && channel->is_swap == 0 && channel->hp != 0 &&
-        channel->hp != p && !holding_plock(&p->priority.prio) &&
-        p->priority.is_swap == 0) {
-      acquire(&channel->lock);
-      // DBG("SWAP TRIGGER!\n");
-
-      channel->is_swap = 1;
-      p->priority.is_swap = 1;
-
-      tprio = channel->hprio;
-      channel->lprio = p->priority.prio;
-      p->priority.prio = tprio;
-
-      channel->lp = p;
-
-      release(&channel->lock);
-      // procdump();
-    }
-  }
+  swap_priority(chan);
 
   for (p = proc; p < &proc[NPROC]; p++) {
     if (p != myproc()) {
       acquire(&p->lock);
-      if (p->state == SLEEPING && p->chan == chan) {
+      if (p->state == SLEEPING && p->channel != 0 && p->channel->chan == chan) {
         p->state = RUNNABLE;
       }
       release(&p->lock);
@@ -966,9 +985,10 @@ void procdump(void) {
   push_off();
   printf("\n");
   struct cpu *c;
-  printf("CPUID\tRUNTIME\n");
+  printf("CPUID\tPID\tNOFF\tRUNTIME\n");
   for (c = cpus; c < &cpus[NCPU]; ++c) {
-    printf("%d\t%ld.%ld ms\n", (int)(c - cpus), c->run_time / 1000,
+    printf("%d\t%d\t%d\t%ld.%ld ms\n", (int)(c - cpus),
+           c->proc == 0 ? -1 : c->proc->pid, c->noff, c->run_time / 1000,
            c->run_time % 1000);
   }
   pop_off();
@@ -976,7 +996,7 @@ void procdump(void) {
 
   char *lock = "???";
 
-  printf("CHANID\tLOCK\tPID\tPRIO\tREFCNT\tIS_SWAP\n");
+  printf("CHANID\tLOCK\tPID\tPRIO\tREFCNT\tIS_SWAP\tIS_USED\n");
   for (channel = channels; channel < &channels[NCHAN]; ++channel) {
     if (channel->chan == 0) {
       continue;
@@ -986,13 +1006,13 @@ void procdump(void) {
         (struct proc *)channel->chan < &proc[NPROC]) {
       lock = "W_PROC";
     } else if (channel->chan == &ticks) {
-      lock = "TICKS";
+      lock = "W_TICKS";
     } else {
       lock = "???";
     }
-    printf("%d\t%s\t%d\t%d\t%d\t%d", (int)(channel - channels), lock,
+    printf("%d\t%s\t%d\t%d\t%d\t%d\t%d", (int)(channel - channels), lock,
            channel->hp != 0 ? channel->hp->pid : -1, channel->hprio,
-           channel->refcnt, channel->is_swap);
+           channel->refcnt, channel->is_swap, channel->refcnt != 0);
     printf("\n");
   }
   printf("\n");

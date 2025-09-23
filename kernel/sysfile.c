@@ -475,7 +475,7 @@ uint64 sys_pipe(void) {
   return 0;
 }
 
-#include "./wolfie.c"
+#include "./wolfie.h"
 
 // int sys_wolfie(void *buf, uint size)
 //

@@ -164,14 +164,27 @@ int printf(char *fmt, ...) {
 void panic(char *s) {
   panicking = 1;
 
-  printf("\x1b[01;31m");
+  struct context ctx = cpus[cpuid()].context;
 
-  printf("[Kernel Panic] ");
-  printf("%s\n", s);
-  printf("--------------------------------------\n");
-  printf("CPU %d\n", cpuid());
-  // printf("in Process [%d]", curr->pid);
+  printf("\n\x1b[01;31m");
+  printf("[==========================================]\n");
+  printf("[==============|Kernel Panic|==============]\n");
+  printf("[==========================================]\n");
+  printf("Reason: %s\n", s);
+  printf("On CPU <%d>\n", cpuid());
+  printf("\n");
 
+  printf(
+      "ra\t| 0x%lx\nsp\t| 0x%lx\ns0\t| 0x%lx\ns1\t| 0x%lx\ns2\t| 0x%lx\ns3\t| "
+      "0x%lx\ns4\t| 0x%lx\ns5\t| "
+      "0x%lx\ns6\t| "
+      "0x%lx\ns7\t| 0x%lx\ns8\t| 0x%lx\ns9\t| 0x%lx\ns10\t| 0x%lx\ns11\t| "
+      "0x%lx\n",
+      ctx.ra, ctx.sp, ctx.s0, ctx.s1, ctx.s2, ctx.s3, ctx.s4, ctx.s5, ctx.s6,
+      ctx.s7, ctx.s8, ctx.s9, ctx.s10, ctx.s11);
+  printf("\n");
+  procdump();
+  printf("\n");
   printf("\x1b[0m");
 
   panicked = 1; // freeze uart output from other CPUs

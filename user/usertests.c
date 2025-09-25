@@ -673,13 +673,17 @@ void exectest(char *s) {
       printf("%s: exec echo failed\n", s);
       exit(1);
     }
+    printf("unreachable\n");
+    exit(0);
     // won't get to here
   }
   if (wait(&xstatus) != pid) {
     printf("%s: wait failed!\n", s);
   }
-  if (xstatus != 0)
+  if (xstatus != 0) {
+    printf("wait xstatus failed!\n");
     exit(xstatus);
+  }
 
   fd = open("echo-ok", O_RDONLY);
   if (fd < 0) {

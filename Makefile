@@ -148,6 +148,8 @@ UPROGS=\
 	$U/_priotest\
 	$U/_starvtest\
 	$U/_donatest\
+	$U/_stackof\
+	$U/_nulltest\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
@@ -185,7 +187,7 @@ qemu: check-qemu-version $K/kernel fs.img
 
 qemu-gdb: $K/kernel .gdbinit fs.img
 	@echo "*** Now run 'gdb' in another window." 1>&2
-	$(QEMU) $(QEMUOPTS) $(QEMUGDB)
+	$(QEMU) $(QEMUOPTS) $(QEMUGDB) -S
 
 print-gdbport:
 	@echo $(GDBPORT)

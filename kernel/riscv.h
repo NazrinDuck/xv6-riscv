@@ -289,4 +289,8 @@ typedef uint64 *pagetable_t; // 512 PTEs
 // that have the high bit set.
 #define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
 
+#define QEMU_POWEROFF_ADDR ((volatile uint32 *)0x100000)
+#define QEMU_POWEROFF_VALUE 0x5555
+#define QEMU_REBOOT_VALUE 0x777
+
 #endif // !__RISCV_H

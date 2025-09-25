@@ -159,6 +159,7 @@ int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa,
     a += PGSIZE;
     pa += PGSIZE;
   }
+  // DBG("maped page va: %p, size: 0x%lx\n", (void *)va, size);
   return 0;
 }
 
@@ -183,7 +184,9 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free) {
   if ((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
+  // START_RT;
   for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
+    // DBG("addr: %p\n", (void *)a);
     if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
       continue;
     if ((*pte & PTE_V) == 0) // has physical page been allocated?
@@ -194,6 +197,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free) {
     }
     *pte = 0;
   }
+  // END_RT;
 }
 
 // Allocate PTEs and physical memory to grow a process from oldsz to
@@ -259,9 +263,8 @@ void freewalk(pagetable_t pagetable) {
 
 // Free user memory pages,
 // then free page-table pages.
-void uvmfree(pagetable_t pagetable, uint64 sz) {
-  if (sz > 0)
-    uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
+void uvmfree(pagetable_t pagetable) {
+  // uvmunmap(pagetable, start, PGROUNDUP(sz) / PGSIZE, 1);
   freewalk(pagetable);
 }
 
@@ -271,13 +274,15 @@ void uvmfree(pagetable_t pagetable, uint64 sz) {
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
-int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz) {
+int uvmcopy(pagetable_t old, pagetable_t new, uint64 start, uint64 sz) {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
   char *mem;
+  start = PGROUNDUP(start);
+  // DBG("start: %p, size: 0x%lx\n", (void *)start, sz);
 
-  for (i = 0; i < sz; i += PGSIZE) {
+  for (i = start; i < start + sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
       continue; // page table entry hasn't been allocated
     if ((*pte & PTE_V) == 0)
@@ -421,20 +426,34 @@ uint64 vmfault(pagetable_t pagetable, uint64 va, int read) {
   uint64 mem;
   struct proc *p = myproc();
 
-  if (va >= p->sz)
+  if ((va >= USERTEXT_START + p->sz && va < HEAP_GUARD) ||
+      va < USERTEXT_START || va >= MAXVA)
     return 0;
+
   va = PGROUNDDOWN(va);
+
+  if (va == HEAP_GUARD) {
+    return 0;
+  }
+
   if (ismapped(pagetable, va)) {
     return 0;
   }
+
   mem = (uint64)kalloc();
-  if (mem == 0)
+  if (mem == 0) {
     return 0;
+  }
   memset((void *)mem, 0, PGSIZE);
   if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0) {
     kfree((void *)mem);
     return 0;
   }
+
+  if (va > HEAP_GUARD && va < USERSTACK_START) {
+    p->stack_sz += PGSIZE;
+  }
+
   return mem;
 }
 

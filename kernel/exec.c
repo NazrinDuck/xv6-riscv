@@ -5,8 +5,6 @@
 
 #include "riscv.h"
 
-#include "spinlock.h"
-
 #include "proc.h"
 
 #include "defs.h"
@@ -30,7 +28,8 @@ int flags2perm(int flags) {
 int kexec(char *path, char **argv) {
   char *s, *last;
   int i, off;
-  uint64 argc, sz = 0, sp, ustack[MAXARG], stackbase;
+  uint64 argc, sz = USERTEXT_START, stack_sz = 0, stack_start = 0, sp,
+               ustack[MAXARG], stackbase;
   struct elfhdr elf;
   struct inode *ip;
   struct proghdr ph;
@@ -83,18 +82,41 @@ int kexec(char *path, char **argv) {
 
   p = myproc();
   uint64 oldsz = p->sz;
+  uint64 oldstack_sz = p->stack_sz;
 
   // Allocate some pages at the next page boundary.
-  // Make the first inaccessible as a stack guard.
-  // Use the rest as the user stack.
+  // Use USERSTACK_START as the user stack.
+  //
+  // INFO: Memory Map
+  // USERSTACK_BASE   0x100010_000 < sp
+  // STACK            0x10000F_000 < stack_base
+  // USERSTACK_START  0x10000E_000 < not mapped
+  //   |                  |
+  //   |                  |  grow lower
+  //   v                  v
+  // HEAP_GUARD       0x100000_000 < stack cannot mapped lower
+  //   ^                  ^
+  //   |                  |  grow uppper
+  //   |                  |
+  // HEAP_START       0x008000_000
   sz = PGROUNDUP(sz);
+
+  stack_start = USERSTACK_START;
+  stack_sz = PGSIZE * (USERSTACK + 1);
   uint64 sz1;
-  if ((sz1 = uvmalloc(pagetable, sz, sz + (USERSTACK + 1) * PGSIZE, PTE_W)) ==
-      0)
+  if ((sz1 = uvmalloc(pagetable, stack_start,
+                      stack_start + (USERSTACK + 1) * PGSIZE, PTE_W)) == 0)
     goto bad;
-  sz = sz1;
-  uvmclear(pagetable, sz - (USERSTACK + 1) * PGSIZE);
-  sp = sz;
+  stack_start = sz1;
+
+  // Now We have no need to Make the first inaccessible as a stack guard.
+  /*
+  if (uvmalloc(pagetable, HEAP_GUARD, HEAP_GUARD + PGSIZE, PTE_W) == 0)
+    goto bad;
+  uvmclear(pagetable, HEAP_GUARD);
+  */
+
+  sp = stack_start;
   stackbase = sp - USERSTACK * PGSIZE;
 
   // Copy argument strings into new stack, remember their
@@ -135,15 +157,18 @@ int kexec(char *path, char **argv) {
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
   p->sz = sz;
+  p->stack_sz = stack_sz;
   p->trapframe->epc = elf.entry; // initial program counter = ulib.c:start()
   p->trapframe->sp = sp;         // initial stack pointer
-  proc_freepagetable(oldpagetable, oldsz);
 
+  // DBG("p->sz: 0x%lx\n", p->sz);
+  //  This function takes MORE time
+  proc_freepagetable(oldpagetable, oldsz, oldstack_sz);
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
 bad:
   if (pagetable)
-    proc_freepagetable(pagetable, sz);
+    proc_freepagetable(pagetable, sz, stack_sz);
   if (ip) {
     iunlockput(ip);
     end_op();

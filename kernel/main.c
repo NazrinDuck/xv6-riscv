@@ -15,7 +15,7 @@ static char *banner = " ___    ___  ___      ___  ________     " LR
                       "  /     \\/    \\ \\    / /    \\ \\  ___  \\ " LR
                       " /  /\\   \\     \\ \\__/ /      \\ \\_______\\" LR
                       "/__/ /\\ __\\     \\|__|/        \\|_______|" LR
-                      "|__|/ \\|__|                             " LR;
+                      "|__|/ \\|__|             On Risc V" LR;
 
 #undef LR
 
@@ -25,7 +25,7 @@ int main() {
     consoleinit();
     printfinit();
 
-    printf("\n%s\n", banner);
+    printf("\n" CYAN "%s" C_END "\n", banner);
     printf("xv6 kernel is booting\n");
     printf("\n");
 

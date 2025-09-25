@@ -58,11 +58,11 @@ uint64 usertrap(void) {
     intr_on();
 
     syscall();
-  } else if ((which_dev = devintr()) != 0) {
+  } else if ((which_dev = devintr()) == 1 || which_dev == 2) {
     // ok
-  } else if ((r_scause() == 15 || r_scause() == 13) &&
-             vmfault(p->pagetable, r_stval(), (r_scause() == 13) ? 1 : 0) !=
-                 0) {
+  } else if ((r_scause() == LOAD_PAGEFAULT || r_scause() == STORE_PAGEFAULT) &&
+             vmfault(p->pagetable, r_stval(),
+                     (r_scause() == STORE_PAGEFAULT) ? 1 : 0) != 0) {
     // page fault on lazily-allocated page
   } else {
     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
@@ -141,6 +141,21 @@ void kerneltrap() {
     panic("kerneltrap");
   }
 
+  switch (which_dev) {
+  case INS_PAGEFAULT:
+    printf("instruction page fault at %p, while pc=%p\n", (void *)r_stval(),
+           (void *)r_sepc());
+    panic("Instruction Pagefault");
+  case LOAD_PAGEFAULT:
+    printf("load page fault at %p, while pc=%p\n", (void *)r_stval(),
+           (void *)r_sepc());
+    panic("Load Pagefault");
+  case STORE_PAGEFAULT:
+    printf("store/AMO page fault at %p, while pc=%p\n", (void *)r_stval(),
+           (void *)r_sepc());
+    panic("Store Pagefault");
+  }
+
   // give up the CPU if this is a timer interrupt.
   if (which_dev == 2 && myproc() != 0)
     yield();
@@ -204,19 +219,13 @@ int devintr() {
     return 1;
 
   case INS_PAGEFAULT:
-    printf("instrution page fault at %p, while pc=%p\n", (void *)r_stval(),
-           (void *)r_sepc());
-    return 0;
+    return scause;
 
   case LOAD_PAGEFAULT:
-    printf("load page fault at %p, while pc=%p\n", (void *)r_stval(),
-           (void *)r_sepc());
-    return 0;
+    return scause;
 
   case STORE_PAGEFAULT:
-    printf("store/AMO page fault at %p, while pc=%p\n", (void *)r_stval(),
-           (void *)r_sepc());
-    return 0;
+    return scause;
   default:
     //  unknown or unimplement interrupt
     return 0;

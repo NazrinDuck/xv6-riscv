@@ -104,7 +104,7 @@ int kfork(void);
 int growproc(int);
 void proc_mapstacks(pagetable_t);
 pagetable_t proc_pagetable(struct proc *);
-void proc_freepagetable(pagetable_t, uint64);
+void proc_freepagetable(pagetable_t, uint64, uint64);
 int kkill(int);
 int killed(struct proc *);
 void setkilled(struct proc *);
@@ -120,6 +120,8 @@ void wakeup(void *);
 void yield(void);
 int either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
+void __attribute__((noreturn)) reboot();
+void __attribute__((noreturn)) shutdown();
 void procdump(void);
 // uint64 atomic_fetch_sched_cnt(uint64 *sched_cnt);
 
@@ -183,8 +185,8 @@ int mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t uvmcreate(void);
 uint64 uvmalloc(pagetable_t, uint64, uint64, int);
 uint64 uvmdealloc(pagetable_t, uint64, uint64);
-int uvmcopy(pagetable_t, pagetable_t, uint64);
-void uvmfree(pagetable_t, uint64);
+int uvmcopy(pagetable_t, pagetable_t, uint64, uint64);
+void uvmfree(pagetable_t);
 void uvmunmap(pagetable_t, uint64, uint64, int);
 void uvmclear(pagetable_t, uint64);
 pte_t *walk(pagetable_t, uint64, int);
@@ -212,6 +214,15 @@ time_t get_cycle();
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
 
+#define RED "\x1b[01;31m"
+#define GREEN "\x1b[01;32m"
+#define YELLOW "\x1b[01;33m"
+#define BLUE "\x1b[01;34m"
+#define PURPLE "\x1b[01;35m"
+#define CYAN "\x1b[01;36m"
+
+#define C_END "\x1b[0m"
+
 // for debug print
 #define DBG(msg, ...)                                                          \
   printf("\x1b[01;31m"                                                         \
@@ -226,5 +237,27 @@ time_t get_cycle();
     (stmt);                                                                    \
     (((get_cycle() - __time0) % CPU_FREQ) * 1000000 / CPU_FREQ);               \
   })
+
+#define DBG_RT(stmt)                                                           \
+  ({                                                                           \
+    time_t __time0 = get_cycle();                                              \
+    (stmt);                                                                    \
+    printf("\x1b[01;31m"                                                       \
+           "[RUN TIME] %s:%d |"                                                \
+           "\x1b[01;34m %ldms\x1b[0m\n",                                       \
+           __FUNCTION__, __LINE__,                                             \
+           (((get_cycle() - __time0) % CPU_FREQ) * 1000000 / CPU_FREQ));       \
+  })
+
+#define START_RT time_t ___time0 = get_cycle()
+
+#define END_RT                                                                 \
+  do {                                                                         \
+    printf("\x1b[01;31m"                                                       \
+           "[RUN TIME] %s:%d |"                                                \
+           "\x1b[01;34m %ldms\x1b[0m\n",                                       \
+           __FUNCTION__, __LINE__,                                             \
+           (((get_cycle() - ___time0) % CPU_FREQ) * 1000000 / CPU_FREQ));      \
+  } while (0);
 
 #endif // !__DEFS_H

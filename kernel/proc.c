@@ -135,12 +135,15 @@ static void releasechan(struct channel *ch) {
   acquire(&ch->lock);
 
   if (ch->is_swap == 1 && ch->lp != 0 && ch->lp->priority.is_swap == 1) {
+    // procdump();
+    // acquire(&ch->lp->lock);
     ch->lp->priority.prio = ch->lprio;
     ch->lp->priority.is_swap = 0;
 
     ch->hprio = 0;
     ch->hp = 0;
     ch->is_swap = 0;
+    // release(&ch->lp->lock);
   }
 
   if (__atomic_sub_fetch(&ch->refcnt, 1, __ATOMIC_ACQ_REL) == 0) {
@@ -225,9 +228,10 @@ static void freeproc(struct proc *p) {
     kfree((void *)p->trapframe);
   p->trapframe = 0;
   if (p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+    proc_freepagetable(p->pagetable, p->sz, p->stack_sz);
   p->pagetable = 0;
   p->sz = 0;
+  p->stack_sz = 0;
   p->pid = 0;
   p->parent = 0;
   p->name[0] = 0;
@@ -257,7 +261,7 @@ pagetable_t proc_pagetable(struct proc *p) {
   // to/from user space, so not PTE_U.
   if (mappages(pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline,
                PTE_R | PTE_X) < 0) {
-    uvmfree(pagetable, 0);
+    uvmfree(pagetable);
     return 0;
   }
 
@@ -266,7 +270,7 @@ pagetable_t proc_pagetable(struct proc *p) {
   if (mappages(pagetable, TRAPFRAME, PGSIZE, (uint64)(p->trapframe),
                PTE_R | PTE_W) < 0) {
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-    uvmfree(pagetable, 0);
+    uvmfree(pagetable);
     return 0;
   }
 
@@ -275,10 +279,24 @@ pagetable_t proc_pagetable(struct proc *p) {
 
 // Free a process's page table, and free the
 // physical memory it refers to.
-void proc_freepagetable(pagetable_t pagetable, uint64 sz) {
+void inline proc_freepagetable(pagetable_t pagetable, uint64 sz,
+                               uint64 stack_sz) {
+
+  // DBG("stack_sz: 0x%lx\n", sz);
+  uint64 stack_start = USERSTACK_START - (PGROUNDUP(stack_sz)) + PGSIZE * 2;
+  // DBG("sz: 0x%lx\n", sz);
+  // DBG("stack_sz: 0x%lx\n", sz);
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
-  uvmfree(pagetable, sz);
+
+  /*
+    DBG("stack_sz: Od 0x%lx do 0x%lx\n", stack_start,
+        PGROUNDUP(stack_sz) + stack_start);
+        */
+
+  uvmunmap(pagetable, USERTEXT_START, PGROUNDUP(sz) / PGSIZE, 1);
+  uvmunmap(pagetable, stack_start, PGROUNDUP(stack_sz) / PGSIZE, 1);
+  uvmfree(pagetable);
 }
 
 // Set up first user process.
@@ -326,12 +344,14 @@ int kfork(void) {
   }
 
   // Copy user memory from parent to child.
-  if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
+  if (uvmcopy(p->pagetable, np->pagetable, USERTEXT_START, p->sz) < 0 ||
+      uvmcopy(p->pagetable, np->pagetable, USERSTACK_START, p->stack_sz) < 0) {
     freeproc(np);
     release(&np->lock);
     return -1;
   }
   np->sz = p->sz;
+  np->stack_sz = p->stack_sz;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -433,6 +453,7 @@ void kexit(int status) {
   if (p->priority.is_swap == 1) {
     struct channel *ch;
     for (ch = channels; ch < &channels[NCHAN]; ch++) {
+      acquire(&ch->lock);
       if (ch->refcnt > 0 && ch->lp == p && ch->is_swap == 1) {
         ch->lp->priority.prio = ch->lprio;
         ch->lp->priority.is_swap = 0;
@@ -441,6 +462,7 @@ void kexit(int status) {
         ch->hp = 0;
         ch->is_swap = 0;
       }
+      release(&ch->lock);
     }
   }
 
@@ -891,6 +913,7 @@ int kkill(int pid) {
       p->killed = 1;
       if (p->state == SLEEPING) {
         // Wake process from sleep().
+        swap_priority(p->channel->chan);
         p->state = RUNNABLE;
       }
       release(&p->lock);
@@ -902,11 +925,17 @@ int kkill(int pid) {
 }
 
 void setkilled(struct proc *p) {
+  acquire(&p->lock);
   __atomic_store_n(&p->killed, 1, __ATOMIC_SEQ_CST);
+  release(&p->lock);
 }
 
 int killed(struct proc *p) {
-  return __atomic_load_n(&p->killed, __ATOMIC_RELAXED);
+  int killed = 0;
+  acquire(&p->lock);
+  killed = __atomic_load_n(&p->killed, __ATOMIC_RELAXED);
+  release(&p->lock);
+  return killed;
 }
 
 // Copy to either a user address, or kernel address,
@@ -932,6 +961,26 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len) {
   } else {
     memmove(dst, (char *)src, len);
     return 0;
+  }
+}
+
+void __attribute__((noreturn)) reboot() {
+
+  (*(QEMU_POWEROFF_ADDR)) = QEMU_REBOOT_VALUE;
+
+  // Fail to wait forever
+  for (;;) {
+    asm volatile("wfi");
+  }
+}
+
+void __attribute__((noreturn)) shutdown() {
+
+  (*(QEMU_POWEROFF_ADDR)) = QEMU_POWEROFF_VALUE;
+
+  // Fail to wait forever
+  for (;;) {
+    asm volatile("wfi");
   }
 }
 

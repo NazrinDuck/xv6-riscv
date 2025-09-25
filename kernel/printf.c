@@ -161,33 +161,96 @@ int printf(char *fmt, ...) {
   return 0;
 }
 
+static uint64 __line_num = 1;
+
+#define PANIC_PROMPT RED "#[%ld]" BLUE "\t| " C_END
+#define PANIC(msg, ...)                                                        \
+  printf(PANIC_PROMPT BLUE msg C_END, __line_num++, ##__VA_ARGS__)
+
+#define UNWIND_REG(reg) PANIC(#reg "\t| 0x%lx\n", tpf->reg)
+#define UNWIND_KREG(reg) PANIC(#reg "\t| 0x%lx\n", ctx->reg)
+
+#define BUFFER_SIZE 100
+
 void panic(char *s) {
   panicking = 1;
 
-  struct context ctx = cpus[cpuid()].context;
+  struct trapframe *tpf = myproc()->trapframe;
+  struct context *ctx = &myproc()->context;
 
-  printf("\n\x1b[01;31m");
-  printf("[==========================================]\n");
-  printf("[==============|Kernel Panic|==============]\n");
-  printf("[==========================================]\n");
-  printf("Reason: %s\n", s);
-  printf("On CPU <%d>\n", cpuid());
+  // TODO: Unwind full stack
   printf("\n");
+  PANIC(RED "[==========================================]\n");
+  PANIC(RED "[==============|" CYAN "Kernel Panic" RED "|==============]\n");
+  PANIC(RED "[==========================================]\n");
+  PANIC("\n");
+  PANIC("Panic Reason:" RED "\t< %s >\n" C_END, s);
+  PANIC(PURPLE "--------------------------------------------\n" C_END);
+  PANIC("On CPU <" RED "%d" BLUE ">\n", cpuid());
+  PANIC("\n");
+  PANIC("CPU Context:\n");
+  PANIC("--------------------------\n");
+  UNWIND_KREG(ra);
+  UNWIND_KREG(sp);
+  UNWIND_KREG(s0);
+  UNWIND_KREG(s1);
+  UNWIND_KREG(s2);
+  UNWIND_KREG(s3);
+  UNWIND_KREG(s4);
+  UNWIND_KREG(s5);
+  UNWIND_KREG(s6);
+  UNWIND_KREG(s7);
+  UNWIND_KREG(s8);
+  UNWIND_KREG(s9);
+  UNWIND_KREG(s10);
+  UNWIND_KREG(s11);
+  PANIC("--------------------------\n");
 
-  printf(
-      "ra\t| 0x%lx\nsp\t| 0x%lx\ns0\t| 0x%lx\ns1\t| 0x%lx\ns2\t| 0x%lx\ns3\t| "
-      "0x%lx\ns4\t| 0x%lx\ns5\t| "
-      "0x%lx\ns6\t| "
-      "0x%lx\ns7\t| 0x%lx\ns8\t| 0x%lx\ns9\t| 0x%lx\ns10\t| 0x%lx\ns11\t| "
-      "0x%lx\n",
-      ctx.ra, ctx.sp, ctx.s0, ctx.s1, ctx.s2, ctx.s3, ctx.s4, ctx.s5, ctx.s6,
-      ctx.s7, ctx.s8, ctx.s9, ctx.s10, ctx.s11);
+  PANIC("\n");
+  PANIC("Proc <%d> Registers:\n", myproc()->pid);
+  PANIC("--------------------------\n");
+  UNWIND_REG(ra);
+  UNWIND_REG(sp);
+  UNWIND_REG(gp);
+  UNWIND_REG(tp);
+  UNWIND_REG(t0);
+  UNWIND_REG(t1);
+  UNWIND_REG(t2);
+  UNWIND_REG(s0);
+  UNWIND_REG(s1);
+  UNWIND_REG(a0);
+  UNWIND_REG(a1);
+  UNWIND_REG(a2);
+  UNWIND_REG(a3);
+  UNWIND_REG(a4);
+  UNWIND_REG(a5);
+  UNWIND_REG(a6);
+  UNWIND_REG(a7);
+  UNWIND_REG(s2);
+  UNWIND_REG(s3);
+  UNWIND_REG(s4);
+  UNWIND_REG(s5);
+  UNWIND_REG(s6);
+  UNWIND_REG(s7);
+  UNWIND_REG(s8);
+  UNWIND_REG(s9);
+  UNWIND_REG(s10);
+  UNWIND_REG(s11);
+  UNWIND_REG(t3);
+  UNWIND_REG(t4);
+  UNWIND_REG(t5);
+  UNWIND_REG(t6);
+  PANIC("--------------------------\n");
+  // PANIC("sp: %lx", *(uint64 *)ctx->sp);
+
   printf("\n");
   procdump();
   printf("\n");
+
   printf("\x1b[0m");
 
   panicked = 1; // freeze uart output from other CPUs
+  shutdown();
   for (;;)
     ;
 }
